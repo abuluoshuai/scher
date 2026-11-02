@@ -45,8 +45,17 @@ void persistSearchScopes(const App& app);
 void persistOpenInTabs(const App& app);
 
 // The configuration home: the exe's folder in portable mode (a
-// settings.ini beside tinta.exe opts in, #147), else %APPDATA%\Tinta
+// settings.ini beside scher.exe opts in, #147), else %APPDATA%\Scher.
+// On first run under Scher the contents of a pre-rename %APPDATA%\Tinta
+// are adopted (see migrateLegacyConfigDir).
 std::wstring tintaConfigDir();
+
+// One-time adoption of a pre-rename config folder: copies settings.ini,
+// themes.ini, languages.ini and the drafts subfolder from legacyDir into
+// currentDir, but only when currentDir has no content of its own yet.
+// Skipped entirely once Scher has written anything.
+void migrateLegacyConfigDir(const std::wstring& legacyDir,
+                            const std::wstring& currentDir);
 
 // Resolve the actual file before handing it to an external editor, which
 // does not share a Store/MSIX process's virtualized AppData view.

@@ -11,7 +11,7 @@
 #include <sstream>
 
 // The config home's drafts folder (portable beside the exe, else
-// %APPDATA%\Tinta), created on first use
+// %APPDATA%\Scher), created on first use
 static std::wstring draftsDirPath() {
     std::wstring path = tintaConfigDir();
     if (path.empty()) return L"";

@@ -1813,13 +1813,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 // The bare-launch tutorial moved to startpage.cpp: failed loads fall
 // back to the start page, which keeps the sample behind a Learn card
 
-// Last-chance handler: writes %LOCALAPPDATA%\Tinta\crash.dmp so crash
+// Last-chance handler: writes %LOCALAPPDATA%\Scher\crash.dmp so crash
 // reports from the field carry a usable stack
 static LONG WINAPI writeCrashDump(EXCEPTION_POINTERS* exceptionInfo) {
     wchar_t path[MAX_PATH];
     DWORD len = GetEnvironmentVariableW(L"LOCALAPPDATA", path, MAX_PATH);
     if (len == 0 || len >= MAX_PATH) return EXCEPTION_CONTINUE_SEARCH;
-    std::wstring dir = std::wstring(path) + L"\\Tinta";
+    std::wstring dir = std::wstring(path) + L"\\Scher";
     CreateDirectoryW(dir.c_str(), nullptr);
     std::wstring file = dir + L"\\crash.dmp";
     HANDLE dump = CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr,

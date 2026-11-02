@@ -150,7 +150,7 @@ extern const D2DTheme THEMES[];
 extern const int THEME_COUNT;
 
 // Dynamic theme registry (#82): the built-ins plus user themes loaded from
-// %APPDATA%\Tinta\themes.ini. Custom themes own their strings and live at
+// %APPDATA%\Scher\themes.ini. Custom themes own their strings and live at
 // stable addresses for the app lifetime, so D2DTheme's const wchar_t*
 // members stay valid. Indices: [0, THEME_COUNT) built-in, then customs.
 struct CustomTheme {

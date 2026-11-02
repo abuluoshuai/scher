@@ -44,7 +44,7 @@ int detectSystemLanguage();
 int clampLanguageIndex(int index);
 
 // Dynamic language registry: the compiled languages plus any [section] of
-// %APPDATA%\Tinta\languages.ini that carries translations (name= labels
+// %APPDATA%\Scher\languages.ini that carries translations (name= labels
 // it). Indices are runtime-only — persist the id string, not the index.
 int languageCount();
 const wchar_t* languageNameAt(int index);

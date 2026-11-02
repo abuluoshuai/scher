@@ -225,7 +225,7 @@ const int THEME_COUNT = sizeof(THEMES) / sizeof(THEMES[0]);
 
 // ---- Dynamic theme registry (#82) ----
 //
-// User themes live in %APPDATA%\Tinta\themes.ini as repeated [theme]
+// User themes live in %APPDATA%\Scher\themes.ini as repeated [theme]
 // sections. Every field the editor writes is optional when hand-authored;
 // missing colors fall back to Paper. Example:
 //   [theme]

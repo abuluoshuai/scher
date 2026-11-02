@@ -3,7 +3,7 @@
 #include "app.h"
 
 // Draft autosave (crash recovery): dirty edit buffers are mirrored to
-// %APPDATA%\Tinta\drafts every sweep; a graceful close removes them, so
+// %APPDATA%\Scher\drafts every sweep; a graceful close removes them, so
 // anything left behind at startup is a crash leftover offered back via
 // the recovery chip.
 #define TIMER_DRAFT_SAVE 11

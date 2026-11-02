@@ -602,7 +602,7 @@ int detectSystemLanguage() {
 // ---- Dynamic language registry + languages.ini ----
 //
 // The compiled table ships en/zh complete with ja/ko columns; the registry
-// grows at runtime from %APPDATA%\Tinta\languages.ini, where any [section]
+// grows at runtime from %APPDATA%\Scher\languages.ini, where any [section]
 // becomes a selectable language (name= sets its dropdown label) and
 // key=value lines override or fill strings. Lookup order per language:
 // override -> compiled column (if any) -> compiled English -> the key.

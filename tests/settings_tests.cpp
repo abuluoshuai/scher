@@ -629,6 +629,66 @@ void draftRecovery() {
     std::filesystem::remove(mine, ignored);
 }
 
+void legacyConfigMigration() {
+    // First run under Scher adopts a pre-rename %APPDATA%\Tinta folder:
+    // the three INI files plus the drafts subfolder, and nothing else.
+    namespace fs = std::filesystem;
+    const fs::path root =
+        fs::temp_directory_path() / "scher-migration-suite";
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+    const fs::path legacy = root / "Tinta";
+    const fs::path current = root / "Scher";
+    fs::create_directories(legacy / "drafts");
+
+    write(legacy.wstring() + L"\\settings.ini",
+          "[Settings]\nthemeIndex=2\nzoomFactor=1.5\n");
+    write(legacy.wstring() + L"\\themes.ini",
+          "[theme]\nname=OldCustom\nbackground=111111\n");
+    write(legacy.wstring() + L"\\languages.ini",
+          "[xx]\nname=Custom\nsettings.title=Hello\n");
+    write(legacy.wstring() + L"\\drafts\\draft-777-1-0.md",
+          "<!-- tinta-draft:C:////old////note.md -->\nold body\n");
+    // Not part of the configuration: must NOT be copied
+    write(legacy.wstring() + L"\\leftover.tmp", "junk");
+
+    migrateLegacyConfigDir(legacy.wstring(), current.wstring());
+    check(read(current.wstring() + L"\\settings.ini")
+              .find("themeIndex=2") != std::string::npos,
+          "settings.ini is adopted from the legacy folder");
+    check(read(current.wstring() + L"\\themes.ini")
+              .find("OldCustom") != std::string::npos,
+          "themes.ini is adopted");
+    check(read(current.wstring() + L"\\languages.ini")
+              .find("settings.title=Hello") != std::string::npos,
+          "languages.ini is adopted");
+    check(read(current.wstring() + L"\\drafts\\draft-777-1-0.md")
+              .find("old body") != std::string::npos,
+          "drafts are adopted");
+    check(!fs::exists(current / "leftover.tmp"),
+          "unrelated files are not copied");
+
+    // Re-running is harmless: CopyFileW(..., TRUE) never overwrites
+    write(legacy.wstring() + L"\\settings.ini",
+          "[Settings]\nthemeIndex=9\n");
+    migrateLegacyConfigDir(legacy.wstring(), current.wstring());
+    check(read(current.wstring() + L"\\settings.ini")
+              .find("themeIndex=2") != std::string::npos,
+          "a second migration never overwrites what was adopted");
+
+    // An existing Scher folder with real content blocks the adoption
+    const fs::path busy = root / "ScherBusy";
+    fs::create_directories(busy);
+    write(busy.wstring() + L"\\settings.ini",
+          "[Settings]\nthemeIndex=5\n");
+    migrateLegacyConfigDir(legacy.wstring(), busy.wstring());
+    check(read(busy.wstring() + L"\\settings.ini")
+              .find("themeIndex=5") != std::string::npos,
+          "an existing configuration wins over the legacy copy");
+
+    fs::remove_all(root, ignored);
+}
+
 }  // namespace
 
 int runSettingsTests() {
@@ -640,7 +700,7 @@ int runSettingsTests() {
     }
     // The wrapper writes settings.ini beside the executable so the app runs
     // in portable mode; without it these tests would rewrite the real
-    // %APPDATA%\Tinta\settings.ini.
+    // %APPDATA%\Scher\settings.ini.
     const fs::path expected = fs::current_path() / "settings.ini";
     check(fs::exists(expected),
           "the test runs in a portable configuration folder");
@@ -659,6 +719,7 @@ int runSettingsTests() {
     pandocBridge();
     draftRecovery();
     session();
+    legacyConfigMigration();
     write(path, backup);
 
     std::cout << "Settings: " << checks << " checks, " << failures
