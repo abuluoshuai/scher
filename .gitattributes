@@ -1,0 +1,4 @@
+# Batch files must reach the disk with CRLF: cmd.exe mis-parses labels and
+# goto in an LF-only script.
+*.bat text eol=crlf
+*.cmd text eol=crlf
