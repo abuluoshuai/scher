@@ -44,7 +44,68 @@ struct LayoutInfo {
     IDWriteTextLayout* layout = nullptr;
     float width = 0.0f;
     float height = 0.0f;
+    float glyphAscent = 0.0f;   // font ascent in pixels, above the baseline
+    float glyphDescent = 0.0f;  // font descent in pixels, below it
 };
+
+// Ascent/descent of the font a format asks for, in pixels. Cached by
+// family/size/weight/style/stretch: layout creation happens per run, and the
+// distance a font puts between baseline and glyph edge never changes.
+struct GlyphMetricsEntry {
+    float ascent = 0.0f;
+    float descent = 0.0f;
+};
+
+static GlyphMetricsEntry glyphMetricsFor(App& app, IDWriteTextFormat* format) {
+    static std::map<std::wstring, GlyphMetricsEntry> cache;
+    GlyphMetricsEntry result;
+    if (!format || !app.dwriteFactory) return result;
+
+    const float fontSize = format->GetFontSize();
+    const DWRITE_FONT_WEIGHT weight = format->GetFontWeight();
+    const DWRITE_FONT_STYLE style = format->GetFontStyle();
+    const DWRITE_FONT_STRETCH stretch = format->GetFontStretch();
+
+    const UINT32 familyLength = std::min<UINT32>(format->GetFontFamilyNameLength(), 127);
+    wchar_t family[128]{};
+    if (familyLength == 0) return result;
+    format->GetFontFamilyName(family, 128);
+
+    std::wstring key(family);
+    key += L"|" + std::to_wstring((int)fontSize) + L"|" +
+           std::to_wstring((int)weight) + L"|" + std::to_wstring((int)style) +
+           L"|" + std::to_wstring((int)stretch);
+    auto found = cache.find(key);
+    if (found != cache.end()) return found->second;
+
+    IDWriteFontCollection* collection = nullptr;
+    if (SUCCEEDED(format->GetFontCollection(&collection)) && collection) {
+        UINT32 index = 0;
+        BOOL exists = FALSE;
+        if (SUCCEEDED(collection->FindFamilyName(family, &index, &exists)) && exists) {
+            IDWriteFontFamily* fontFamily = nullptr;
+            if (SUCCEEDED(collection->GetFontFamily(index, &fontFamily)) && fontFamily) {
+                IDWriteFont* font = nullptr;
+                if (SUCCEEDED(fontFamily->GetFirstMatchingFont(weight, stretch, style,
+                                                              &font)) &&
+                    font) {
+                    DWRITE_FONT_METRICS metrics{};
+                    font->GetMetrics(&metrics);
+                    font->Release();
+                    if (metrics.designUnitsPerEm > 0) {
+                        const float em = fontSize / (float)metrics.designUnitsPerEm;
+                        result.ascent = (float)metrics.ascent * em;
+                        result.descent = (float)metrics.descent * em;
+                    }
+                }
+                fontFamily->Release();
+            }
+        }
+        collection->Release();
+    }
+    cache[key] = result;
+    return result;
+}
 
 static LayoutInfo createLayout(App& app, std::wstring_view text, IDWriteTextFormat* format,
                                float lineHeight, IDWriteTypography* typography) {
@@ -70,6 +131,9 @@ static LayoutInfo createLayout(App& app, std::wstring_view text, IDWriteTextForm
         info.layout->GetMetrics(&metrics);
         info.width = metrics.widthIncludingTrailingWhitespace;
         info.height = metrics.height;
+        const GlyphMetricsEntry glyph = glyphMetricsFor(app, format);
+        info.glyphAscent = glyph.ascent;
+        info.glyphDescent = glyph.descent;
     }
     return info;
 }
@@ -130,6 +194,8 @@ static void addTextRun(App& app, LayoutInfo&& info, const D2D1_POINT_2F& pos,
     run.docStart = docStart;
     run.docLength = docLength;
     run.selectable = selectable;
+    run.glyphAscent = info.glyphAscent;
+    run.glyphDescent = info.glyphDescent;
     app.layoutTextRuns.push_back(run);
 
     if (selectable) {

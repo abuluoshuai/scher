@@ -1093,6 +1093,11 @@ struct App {
         size_t docStart = 0;
         size_t docLength = 0;
         bool selectable = false;
+        // Glyph box of the run's font, in pixels: ascent above the baseline
+        // and descent below it. Selection bars use these so the highlight
+        // hugs the glyphs instead of filling the 1.7x line advance.
+        float glyphAscent = 0.0f;
+        float glyphDescent = 0.0f;
     };
     struct LayoutRect {
         D2D1_RECT_F rect{};

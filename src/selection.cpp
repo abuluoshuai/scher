@@ -126,6 +126,19 @@ bool selectionLineRange(const App& app, size_t offset, size_t& start, size_t& en
     return false;
 }
 
+D2D1_RECT_F glyphLineBox(float baselineY, float ascent, float descent,
+                         float fallbackTop, float fallbackBottom, float left,
+                         float right) {
+    // Runs without measured font metrics fall back to their layout box.
+    if (ascent <= 0.0f && descent <= 0.0f)
+        return D2D1::RectF(left, fallbackTop, right, fallbackBottom);
+    const float top = baselineY - ascent;
+    const float bottom = baselineY + descent;
+    if (bottom <= top)
+        return D2D1::RectF(left, fallbackTop, right, fallbackBottom);
+    return D2D1::RectF(left, top, right, bottom);
+}
+
 void selectionHighlightRects(const App& app, size_t start, size_t end,
                              std::vector<D2D1_RECT_F>& out) {
     if (start >= end) return;
@@ -154,10 +167,22 @@ void selectionHighlightRects(const App& app, size_t start, size_t end,
         HRESULT hr = run.layout->HitTestTextRange(
             (UINT32)(lo - run.docStart), (UINT32)(hi - lo),
             run.pos.x, run.pos.y, &metrics, 1, &metricCount);
+        // The bar's vertical extent comes from the run's font metrics: the
+        // layout box is 1.7x the font size and paints a band above and below
+        // the glyphs.
+        DWRITE_LINE_METRICS line{};
+        UINT32 lineCount = 0;
+        const bool haveLine =
+            SUCCEEDED(run.layout->GetLineMetrics(&line, 1, &lineCount)) &&
+            lineCount > 0;
+        const float baselineY = run.pos.y + (haveLine ? line.baseline : 0.0f);
+        auto verticalBox = [&](float left, float right) {
+            return glyphLineBox(baselineY, run.glyphAscent, run.glyphDescent,
+                                run.bounds.top, run.bounds.bottom, left, right);
+        };
+
         if (SUCCEEDED(hr) && metricCount == 1 && metrics.width > 0.0f) {
-            out.push_back(D2D1::RectF(
-                metrics.left, run.bounds.top,
-                metrics.left + metrics.width, run.bounds.bottom));
+            out.push_back(verticalBox(metrics.left, metrics.left + metrics.width));
             continue;
         }
 
@@ -172,10 +197,7 @@ void selectionHighlightRects(const App& app, size_t start, size_t end,
                 (UINT32)(hi - run.docStart), FALSE, &x1, &y1, &edge))) {
             float left = run.pos.x + std::min(x0, x1);
             float right = run.pos.x + std::max(x0, x1);
-            if (right > left) {
-                out.push_back(D2D1::RectF(left, run.bounds.top,
-                                          right, run.bounds.bottom));
-            }
+            if (right > left) out.push_back(verticalBox(left, right));
         }
     }
 

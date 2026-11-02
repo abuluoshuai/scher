@@ -27,6 +27,14 @@ bool selectionLineRange(const App& app, size_t offset, size_t& start, size_t& en
 // Exact text-run highlight rectangles for [start, end), document coordinates.
 // Each rectangle covers only the selected glyph range; table-cell padding and
 // gaps between cells are not included.
+// Vertical extent of a selection bar for one line. The highlight follows the
+// font's glyph box (ascent above the baseline, descent below) instead of the
+// layout box: Scher sets a generous 1.7x line advance, and painting that whole
+// box leaves a visible band above and below the text.
+D2D1_RECT_F glyphLineBox(float baselineY, float ascent, float descent,
+                         float fallbackTop, float fallbackBottom, float left,
+                         float right);
+
 void selectionHighlightRects(const App& app, size_t start, size_t end,
                              std::vector<D2D1_RECT_F>& out);
 

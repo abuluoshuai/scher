@@ -209,7 +209,33 @@ void checkCellWords(App& app) {
     }
 }
 
+
+// Selection bars hug the glyphs. Scher lays text out with a 1.7x line
+// advance, so painting the layout box leaves a visible band above and below
+// the line - the geometry rule lives in glyphLineBox.
+void selectionGlyphBox() {
+    // 14px font: ascent 12, descent 4, baseline sits 15px into the line box
+    const float baseline = 15.0f;
+    const D2D1_RECT_F tight =
+        glyphLineBox(baseline, 12.0f, 4.0f, 0.0f, 25.0f, 10.0f, 40.0f);
+    check(tight.top == 3.0f && tight.bottom == 19.0f,
+          "the bar spans ascent to descent around the baseline");
+    check(tight.bottom - tight.top < 25.0f,
+          "the bar is shorter than the 1.7x line box");
+    check(tight.left == 10.0f && tight.right == 40.0f,
+          "the bar keeps the measured horizontal span");
+
+    // A run with no font metrics keeps its layout box.
+    const D2D1_RECT_F loose =
+        glyphLineBox(baseline, 0.0f, 0.0f, 0.0f, 25.0f, 10.0f, 40.0f);
+    check(loose.top == 0.0f && loose.bottom == 25.0f,
+          "runs without metrics fall back to the layout box");
+}
+
+void selectionGlyphBox();
+
 int runTableLayoutTests() {
+    selectionGlyphBox();
     {
         auto state = std::make_unique<App>();
         App& app = *state;
