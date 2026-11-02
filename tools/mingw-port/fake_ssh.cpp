@@ -69,6 +69,18 @@ static std::wstring unquote(const std::wstring& s) {
     return out;
 }
 
+// The remote shell would expand ~ to the login home. remote.cpp emits the
+// tilde form as "$HOME"/'rest' (tilde kept outside the quotes), so the fake
+// resolves it the same way a real shell would: "$HOME" is the fake's root,
+// and the quoted remainder follows it.
+static std::wstring expandHome(const std::wstring& arg) {
+    const std::wstring home = L"\"$HOME\"";
+    if (arg == home) return L"";
+    if (arg.rfind(home + L"/", 0) == 0)
+        return L"/" + unquote(arg.substr(home.size() + 1));
+    return unquote(arg);
+}
+
 static int listDir(const std::wstring& rel) {
     std::wstring dir = rootDir();
     if (!rel.empty()) {
@@ -155,7 +167,17 @@ int main(int argc, char** argv) {
         if (at != std::wstring::npos) {
             std::wstring rest = w.substr(at + 6);
             if (rest.find(L"\"$HOME\"") == 0) {
-                rel.clear();
+                // cd -- "$HOME"/'sub' expands tilde+subpath; a bare "$HOME"
+                // is the home itself. The quoted part ends at its closing
+                // quote - " || exit 3" follows it on the same line.
+                std::wstring after = rest.substr(8);  // past "$HOME" and the /
+                if (!after.empty() && after[0] == L'\'') {
+                    size_t close = after.find(L'\'', 1);
+                    if (close == std::wstring::npos) close = after.size();
+                    rel = L"/" + after.substr(1, close - 1);
+                } else {
+                    rel.clear();
+                }
             } else {
                 size_t q1 = rest.find(L'\'');
                 if (q1 != std::wstring::npos) {
@@ -179,7 +201,7 @@ int main(int argc, char** argv) {
         std::wstring rest = w.substr(at + 7);
         size_t nl = rest.find(L'\n');
         if (nl != std::wstring::npos) rest = rest.substr(0, nl);
-        return catFile(trimEnds(unquote(rest)));
+        return catFile(expandHome(trimEnds(rest)));
     }
     fputs("fake-ssh: unsupported command\n", stderr);
     return 1;

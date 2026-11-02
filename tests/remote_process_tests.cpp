@@ -159,6 +159,39 @@ int runRemoteProcessSuite() {
 
     content.clear();
     error.clear();
+    check(remoteReadBlocking("box", "~/note.md", content, error),
+          "a tilde path expands to the home (" + error + ")");
+    check(content == "# 远程笔记\r\n\r\nBody with 中文.\r\n",
+          "the tilde read returns the home file's content");
+
+    content.clear();
+    error.clear();
+    check(remoteReadBlocking("box", "~/测试目录/inner.md", content, error),
+          "a tilde path with a subdirectory reads");
+    check(content == "inner\n", "the tilde subpath content matches");
+
+    entries.clear();
+    error.clear();
+    check(remoteListBlocking("box", "~", entries, error, &resolved),
+          "listing ~ works (" + error + ")");
+    check(resolved == "/", "listing ~ resolves to the home /");
+    check(!entries.empty(), "the home listing is not empty");
+
+    entries.clear();
+    error.clear();
+    resolved.clear();
+    check(remoteListBlocking("box", "~/测试目录", entries, error, &resolved),
+          "listing ~/dir works");
+    check(resolved == "/测试目录",
+          "the tilde listing resolves to the absolute subdirectory (" +
+              resolved + ")");
+    bool sawInner = false;
+    for (const auto& e : entries)
+        if (e.name == L"inner.md") sawInner = true;
+    check(sawInner, "the tilde listing shows the directory contents");
+
+    content.clear();
+    error.clear();
     check(!remoteReadBlocking("box", "/nope.md", content, error),
           "a missing file fails to read");
     check(!error.empty(), "a failed read explains itself");

@@ -116,10 +116,17 @@ def main():
     t = title(hwnd)
     check(t == "Scher - plain.md", "session restored a remote tab", t)
 
-    # Local row in the recent-documents menu (first section)
-    click(hwnd, 1200 - 3 * 46 - 34 - 17, 20)
-    time.sleep(0.5)
-    click(hwnd, 700, 87)
+    # Recent-documents menu. The button's 280 ms hover-dwell races a
+    # PostMessage click, so drive it deterministically: a neutral click
+    # clears any open menu, a move onto the button arms the dwell, wait
+    # past it, then click the row. The real client area is 1184x812 (the
+    # window rect includes the frame), so the button centre is
+    # 1184-138-34-4-17 = 947, not the naive 1011.
+    click(hwnd, 590, 400)             # neutral: close any open menu
+    time.sleep(0.3)
+    click(hwnd, 947, 20)              # move+click arms dwell/opens menu
+    time.sleep(0.9)                   # dwell (280 ms) has opened the menu
+    click(hwnd, 700, 87)              # local section, first row
     time.sleep(1.2)
     t = title(hwnd)
     check(t == "Scher - 本地样例.md", "menu opened a local recent file", t)

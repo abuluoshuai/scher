@@ -58,6 +58,18 @@ std::string shellQuote(const std::string& s) {
     return out;
 }
 
+// Quoting that keeps the remote shell's tilde expansion alive: `~` and
+// `~/rest` are left unquoted (the shell expands them to $HOME), and the
+// rest of the path is single-quoted as usual. Plain absolute/relative
+// paths just go through shellQuote. This is what lets the user type
+// `~/docs/notes.md` or `~` in a remote path.
+std::string shellQuoteKeepTilde(const std::string& s) {
+    if (s == "~") return "\"$HOME\"";
+    if (s.rfind("~/", 0) == 0)
+        return "\"$HOME\"/" + shellQuote(s.substr(2));
+    return shellQuote(s);
+}
+
 void readAll(HANDLE h, std::string& sink) {
     char buf[8192];
     DWORD got = 0;
@@ -311,7 +323,9 @@ bool listDirSync(const std::string& host, const std::string& dir,
     if (dir.empty()) {
         script = "cd -- \"$HOME\" || exit 3\n";
     } else {
-        script = "cd -- " + shellQuote(dir) + " || exit 3\n";
+        // ~/... expands to the login home on the remote shell; the tilde
+        // must stay outside the single quotes for that to happen
+        script = "cd -- " + shellQuoteKeepTilde(dir) + " || exit 3\n";
     }
     script += "printf '%s\\n' \"$PWD\"\nLC_ALL=C.UTF-8 ls -1Ap --\n";
     ProcResult r;
@@ -360,7 +374,7 @@ bool readFileSync(const std::string& host, const std::string& file,
         err = "no file";
         return false;
     }
-    std::string script = "cat -- " + shellQuote(file) + "\n";
+    std::string script = "cat -- " + shellQuoteKeepTilde(file) + "\n";
     ProcResult r;
     if (!runRemoteScript(host, script, r)) {
         err = trimAscii(r.err);
