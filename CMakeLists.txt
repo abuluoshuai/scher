@@ -138,8 +138,10 @@ set(RESOURCES
     resources/tinta.rc
 )
 
-# Main executable
+# Main executable (target keeps the upstream name so sources need no churn;
+# the shipped binary is scher.exe)
 add_executable(tinta WIN32 ${SOURCES} ${HEADERS} ${RESOURCES})
+set_target_properties(tinta PROPERTIES OUTPUT_NAME scher)
 
 target_include_directories(tinta PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include

@@ -1,8 +1,8 @@
 <div align="center">
   <img src="resources/tinta.ico" width="80">
-  <h1>Tinta</h1>
+  <h1>Scher</h1>
   <p><em>Markdown, distilled.</em></p>
-  <p>A fast, lightweight Markdown and Mermaid viewer for Windows</p>
+  <p>一个快速、轻量的 Windows Markdown 与 Mermaid 查看器</p>
 
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="MIT License">
@@ -14,25 +14,20 @@
 > **[!NOTE]**
 > 本项目 clone 自 [oipoistar/tinta](https://github.com/oipoistar/tinta)（v3.8.0），在此感谢原作者的开源贡献。随后根据本人需求，纯使用 AI 进行了个性化定制，主要改动见下方 [本 fork 的定制内容](#本-fork-的定制内容)。
 
-Tinta is a **fast, lightweight Markdown and Mermaid viewer for Windows**, built with Direct2D and DirectWrite for hardware-accelerated rendering. A single native executable of about 2.5 MB that opens instantly — no Electron, no web engine, no installer.
-
-<p align="center">
-  <img src="https://tinta.cc/img/screenshots/paper.png" width="49%" alt="Tinta markdown viewer on Windows — Paper light theme">
-  <img src="https://tinta.cc/img/screenshots/midnight.png" width="49%" alt="Tinta markdown viewer on Windows — Midnight dark theme">
-</p>
+Scher 是一个**快速、轻量的 Windows Markdown 与 Mermaid 查看器**，基于 Direct2D 与 DirectWrite 实现硬件加速渲染。单个原生可执行文件仅约 2.5 MB，打开即用——没有 Electron、没有网页引擎、无需安装器。
 
 ## 本 fork 的定制内容
 
 在上游 v3.8.0 基础上，通过 AI 完成了两项主要功能定制：
 
-- **标签页左置（左侧竖排标签栏）** - 设置 → 外观 → "标签栏位置"可在 **顶部 | 左侧** 之间切换。左侧模式下打开的文件以整行横排文件名的形式列在窗口左缘的竖排栏里，底部是新建标签按钮，列表溢出时可滚动，右缘可拖拽调整栏宽（220–560 逻辑像素，持久保存）。
-- **SSH 远程阅读** - 直接打开远程机器上的 Markdown（只读）。远程浏览器列出 `~/.ssh/config` 的 `Host` 条目并复用其中已配置的密钥（无密码登录）；中文路径与文件名全程无损；支持多选一次打开多个远程文件为标签页；远程文件与本地文件合并在同一个"最近文档"菜单中。
+- **标签页左置（左侧竖排标签栏）** — 设置 → 外观 → "标签栏位置"可在 **顶部 | 左侧** 之间切换。左侧模式下打开的文件以整行横排文件名的形式列在窗口左缘的竖排栏里，底部是新建标签按钮，列表溢出时可滚动，右缘可拖拽调整栏宽（220–560 逻辑像素，持久保存）。
+- **SSH 远程阅读** — 直接打开远程机器上的 Markdown（只读）。远程浏览器列出 `~/.ssh/config` 的 `Host` 条目并复用其中已配置的密钥（无密码登录）；中文路径与文件名全程无损；支持多选一次打开多个远程文件为标签页；远程文件与本地文件合并在同一个"最近文档"菜单中。
 
 此外还包括少量维护性调整：移除了版本更新检查，版本号重置为 1.0.0。
 
-## Install
+## 构建
 
-源码构建（Windows + MinGW-w64 或 MSVC，CMake 3.15+）：
+需要 Windows + MinGW-w64 或 MSVC，CMake 3.15+：
 
 ```bash
 mkdir build
@@ -41,109 +36,101 @@ cmake ..
 cmake --build . --config Release
 ```
 
-（原始发布渠道见上游仓库：[Microsoft Store](https://apps.microsoft.com/detail/9MZ5MZ3L9RKF) / [GitHub Releases](https://github.com/oipoistar/tinta/releases)。）
+产物为 `scher.exe`。
 
-## Why Tinta?
+## 为什么选择 Scher？
 
-Most markdown apps ship an entire browser to render text. Tinta uses the GPU-accelerated text stack already built into Windows:
+大多数 Markdown 应用为了渲染文本会打包一整个浏览器。Scher 直接使用 Windows 内置的 GPU 加速文本栈：
 
-|  | Tinta | Typora | Obsidian | VS Code |
+|  | Scher | Typora | Obsidian | VS Code |
 |---|---|---|---|---|
-| Startup | **<100 ms** | ~1.5 s | ~3 s | ~2 s |
-| Install size | **~2.5 MB** | ~90 MB | ~250 MB | ~350 MB |
-| Runtime | **Native Direct2D** | Electron | Electron | Electron |
+| 启动速度 | **<100 ms** | ~1.5 s | ~3 s | ~2 s |
+| 安装体积 | **~2.5 MB** | ~90 MB | ~250 MB | ~350 MB |
+| 运行时 | **原生 Direct2D** | Electron | Electron | Electron |
 
-It's a viewer first: perfect as the double-click default for `.md` and `.mmd` files, for reading documentation and diagrams — with an edit mode when you need it.
+它首先是一个查看器：非常适合作为 `.md` 和 `.mmd` 文件的双击默认打开方式，阅读文档和图表——需要时也有编辑模式。
 
-## Features
+## 功能特性
 
-- **Lightning-fast startup** - Direct2D rendering, no web engine overhead
-- **10 beautiful themes** - 5 light and 5 dark themes to choose from
-- **Hardware-accelerated** - Smooth text rendering via DirectWrite
-- **Word wrap** - Optional soft wrap in the editor (Ctrl+W)
-- **Native LaTeX math** - `$inline$` and `$$display$$` equations with matrices, cases, aligned equations, fractions, limits, accents and custom macros. Uses an installed math font; no bundled fonts or web engine. See the [supported math syntax](docs/math-support.md).
-- **Focused editing** - Hide the preview pane while writing (Ctrl+E)
-- **Native Mermaid diagrams** - 22 diagram families, from flowcharts with subgraphs through sequence, class, state, ER, gantt, and pie to C4, sankey, kanban, and radar - rendered without a web engine
-- **Export as HTML, DOCX, or PDF** - Right-click and pick "Export as..." for a self-contained web page, a Word document that opens natively, or a vector PDF; diagrams and math come along in every format
-- **Pandoc export** - With [pandoc](https://pandoc.org) installed (or pointed at in settings), the editor offers EPUB, OpenDocument, PowerPoint, RTF and LaTeX too; rich formats convert from Tinta's own HTML export so diagrams and math survive as vector graphics
-- **Start page** - Bare launches land on a launcher with recent files, quick actions labeled with your actual key bindings, and built-in guides; closing the last tab returns there, and Ctrl+T opens it as a new tab
-- **Review annotations** - Select text and press `A` to attach a note, stored as an invisible HTML comment in the file itself. Annotated passages get a tint and a marker rail beside the scrollbar; hover previews, click edits, and a copy-for-agent button turns the whole review into a paste-ready task list for any coding agent - as the agent fixes items and deletes the comments, the marks vanish live
-- **File references** - Plain-text paths like `docs/plan.md` become real links: live targets open as tabs, missing ones render as faded ghosts. Mouse back/forward (or Alt+arrows) walks your jumps with exact scroll restore
-- **Link peek** - Rest the pointer on a local `.md` or wiki link and the target appears fully rendered in a panel beside it, no tab opened
-- **Image lightbox** - Click any inline image to view it full size: wheel zooms, drag pans, Esc closes
-- **Copy tables as TSV** - Hover a table for a copy button that pastes into Excel or Sheets as a real grid
-- **Copy diagrams as images** - Hover a diagram for an Image button that puts a crisp 2x PNG on the clipboard
-- **Paste screenshots** - Ctrl+V a bitmap in edit mode and it saves as a PNG beside the document with the link inserted
-- **Pin on top** - A pushpin in the title bar keeps the window above every other app
-- **Rich tables** - Tables with bold, italic, code, and clickable links in cells
-- **Tabs** - Win11 Notepad-style tabs in the title bar: files opened from Explorer join the window as tabs, Ctrl+Tab cycles, Ctrl+W or Ctrl+F4 closes (Ctrl+F4 also while editing, where Ctrl+W is word wrap), middle-click closes, Ctrl+T opens the file browser into a new tab, unsaved buffers show a dot, resting the pointer on a tab shows its full name, its folder and what its dot means, and dragging reorders tabs. Right-click a tab for close operations (close, close all but this, close all to the left/right) plus copy path and reveal in Explorer. Pulling a tab out of the strip floats it as a card: drop it on open space for a new window (which keeps the tab row), or onto another Tinta window to move it there — and dropping a single-file window onto a tab strip merges it back. Single-file windows stay tabless; turn the Explorer behavior off with the "Open files in tabs" setting
-- **Folder browser** - Press B to browse and open Markdown or Mermaid files (Ctrl+click a file to open it in a new tab)
-- **Table of contents** - Press Tab to see document headings, click to jump; the panel follows your reading position, and typing filters the headings
-- **Unified editor** - Press `:` to edit: your raw Markdown on the left with the rendered page docked beside it. A slim line-number gutter, a soft accent wash on the caret's line and its rendered block, a tool rail with formatting controls plus table-size and diagram-template pickers, and Markdown assists (lists continue on Enter, Tab indents, Ctrl+B/I wrap, and a quote, bracket or `* ~ ^ = :` typed over a selection wraps it). Alt+↑/↓ moves lines, and several carets (Alt+click, Ctrl+Alt+↑/↓, Ctrl+D) type, delete and move together, handy for lining up tables. A word and character count sits beside the Read button, for the whole document or the selection. Search and find-replace work in the editor too
-- **Emoji shortcodes** - `:rocket:` and friends render as real emoji
-- **Fit to width** - Wide tables and diagrams grow a Fit button that shrinks them to the reading column
-- **Draft recovery** - Unsaved quick notes are stashed continuously and offered back on the next launch. With **Close without asking** (Settings → Editor), closing Tinta skips the save prompt and keeps unsaved edits as drafts for the next launch
-- **Create on click** - Clicking a missing file reference offers to create the file and opens it ready to type
-- **SSH remote reading** - Open Markdown straight from another machine (read-only): the browser lists the `Host` entries of `~/.ssh/config` and connects with the keys that file already uses (no password login), keeps Chinese paths and file names intact, and opens a whole multi-selection as tabs. Remote files join one recent-documents menu with the local ones
-- **Text-file references** - `.txt`, `.json`, `.yaml` and friends link like Markdown files and open as highlighted documents
-- **Search** - Find text with F or Ctrl+F, cycle through matches with Enter; every match shows as a tick on the scrollbar. Ctrl+Shift+F, or the list button at the end of the search bar, opens a results panel beside the page: every match with a snippet, grouped under its heading, then the matches in your other open tabs and in the document's folder, by line. A click jumps to a match, or opens another file in its own tab at that match
-- **Persistent settings** - Remembers your theme, zoom level, and window position
-- **Portable mode** - Create a `settings.ini` next to `tinta.exe` (an empty file works) and the whole configuration — settings, custom themes, languages, drafts — lives beside the executable and travels with it; without one, everything stays in `%APPDATA%\Tinta`
-- **Localized interface** - English, Simplified Chinese, Japanese, Korean, German, French, and Italian UI; follows Windows or a chosen language
-- **Text selection & copy** - Select text and copy to clipboard
-- **Zoom support** - Ctrl+scroll to zoom in/out
-- **Drag & drop** - Drop any Markdown or Mermaid file to view it
-- **Minimal footprint** - Small binary, minimal dependencies
+- **极速启动** — Direct2D 渲染，无网页引擎开销
+- **10 套精美主题** — 5 套浅色 + 5 套深色
+- **硬件加速** — DirectWrite 带来流畅的文本渲染
+- **自动换行** — 编辑器可选软换行（Ctrl+W）
+- **原生 LaTeX 数学** — `$行内公式$` 与 `$$独立公式$$`，支持矩阵、cases、aligned 多行推导、分式、极限、重音符号和自定义宏。使用系统已安装的数学字体，不捆绑字体、不依赖网页引擎。详见[支持的数学语法](docs/math-support.md)。
+- **专注编辑** — 写作时隐藏预览窗格（Ctrl+E）
+- **原生 Mermaid 图表** — 22 个图表族，从带子图的流程图到时序图、类图、状态图、ER 图、甘特图、饼图，再到 C4、桑基图、看板和雷达图——全部原生渲染，无网页引擎
+- **导出 HTML / DOCX / PDF** — 右键选"导出为…"即可得到自包含的网页、原生可打开的 Word 文档或矢量 PDF；图表和公式在每种格式中都完整保留
+- **Pandoc 导出** — 装有 [pandoc](https://pandoc.org)（或在设置中指定路径）时，编辑器还提供 EPUB、OpenDocument、PowerPoint、RTF 和 LaTeX；富格式从 Scher 自己的 HTML 导出转换而来，图表和公式以矢量图形保留
+- **起始页** — 无参数启动时显示启动器：最近文件、按你实际键位标注的快捷操作和内置指南；关闭最后一个标签页回到这里，Ctrl+T 也可将其作为新标签页打开
+- **审阅批注** — 选中文字按 `A` 添加批注，以不可见的 HTML 注释形式存在文件里。被批注的段落有底色标记，滚动条旁有标记栏；悬停预览、点击编辑，还有一个"复制给 Agent"按钮，把整个审阅变成可直接粘贴给编程 Agent 的任务清单——Agent 修复条目并删除注释后，标记实时消失
+- **文件引用** — `docs/plan.md` 这样的纯文本路径变成真实链接：存在的目标以标签页打开，缺失的渲染为淡化的虚影。鼠标前进/后退（或 Alt+方向键）在跳转历史间行走并精确恢复滚动位置
+- **链接预览** — 鼠标悬停在本地 `.md` 或 wiki 链接上，目标文档在旁边的面板中完整渲染，不打开标签页
+- **图片灯箱** — 点击任意内联图片全尺寸查看：滚轮缩放、拖拽平移、Esc 关闭
+- **表格复制为 TSV** — 悬停表格出现复制按钮，粘贴进 Excel 或 Sheets 就是真实网格
+- **图表复制为图片** — 悬停图表出现"图片"按钮，把清晰的 2 倍 PNG 放进剪贴板
+- **粘贴截图** — 编辑模式下 Ctrl+V 粘贴位图，自动保存为文档旁的 PNG 并插入链接
+- **窗口置顶** — 标题栏的图钉让窗口始终位于其它应用之上
+- **富文本表格** — 单元格内支持粗体、斜体、代码和可点击链接
+- **标签页** — Win11 记事本风格的标题栏标签页：从资源管理器打开的文件加入窗口成为标签，Ctrl+Tab 循环切换，Ctrl+W 或 Ctrl+F4 关闭（编辑模式下 Ctrl+W 是换行，所以用 Ctrl+F4），中键关闭，Ctrl+T 打开文件浏览器新建标签，未保存的缓冲区显示圆点，悬停标签显示完整文件名、所在文件夹和圆点含义，拖拽可重排。右键标签可执行关闭操作（关闭、关闭其它、关闭左侧/右侧全部），还有复制路径和在资源管理器中显示。把标签拖出标签栏会浮成卡片：放到空白处成为新窗口（保留标签行），放到另一个 Scher 窗口则移动过去——把单文件窗口拖到标签栏上则合并回来。单文件窗口保持无标签；"以标签页打开文件"设置可关闭资源管理器行为
+- **文件夹浏览器** — 按 B 浏览并打开 Markdown 或 Mermaid 文件（Ctrl+点击文件在新标签页打开）
+- **目录** — 按 Tab 查看文档标题，点击跳转；面板跟随阅读位置，输入即可过滤标题
+- **一体化编辑器** — 按 `:` 进入编辑：左侧原始 Markdown，渲染页面停靠在旁边。纤细的行号栏、光标所在行及其渲染块的柔和强调色、带格式化工具和表格尺寸/图表模板选择器的工具栏，以及 Markdown 辅助（回车延续列表、Tab 缩进、Ctrl+B/I 包裹、引号或 `* ~ ^ = :` 对选中内容自动包裹）。Alt+↑/↓ 移动行，多光标（Alt+点击、Ctrl+Alt+↑/↓、Ctrl+D）同时输入、删除和移动，对齐表格很方便。阅读按钮旁有字数统计，统计全文或选区。搜索与查找替换在编辑器中同样可用
+- **Emoji 短代码** — `:rocket:` 等渲染为真实 emoji
+- **适应宽度** — 过宽的表格和图表会出现"适应"按钮，缩放到阅读栏宽度
+- **草稿恢复** — 未保存的快速笔记持续保存，下次启动时交还给你。开启"关闭时不询问"（设置 → 编辑器）后，关闭 Scher 跳过保存提示，未保存的编辑保留为下次启动的草稿
+- **点击创建** — 点击缺失的文件引用可创建该文件并直接开始输入
+- **SSH 远程阅读** — 直接打开远程机器上的 Markdown（只读）：浏览器列出 `~/.ssh/config` 的 `Host` 条目并复用其中已配置的密钥（无密码登录），中文路径与文件名全程无损，多选一次打开为多个标签页。远程文件与本地文件合并在同一个"最近文档"菜单中
+- **文本文件引用** — `.txt`、`.json`、`.yaml` 等文件像 Markdown 一样成为链接，以高亮文档打开
+- **搜索** — F 或 Ctrl+F 查找，回车循环匹配；每个匹配在滚动条上有刻度标记。Ctrl+Shift+F 或搜索栏末尾的列表按钮打开旁边的结果面板：每个匹配带片段、按标题分组，随后是其它标签页和文档所在文件夹中的匹配，按行排列。点击跳转到匹配处，或将文件以新标签页打开并定位到该行
+- **设置持久化** — 记住主题、缩放级别和窗口位置
+- **便携模式** — 在 `scher.exe` 旁创建 `settings.ini`（空文件即可），全部配置——设置、自定义主题、语言、草稿——就保存在可执行文件旁边随行；没有它则保存在 `%APPDATA%\Tinta`
+- **多语言界面** — 英文、简体中文、日文、韩文、德文、法文和意大利文界面；跟随 Windows 或手动选择
+- **文本选择与复制** — 选中文字复制到剪贴板
+- **缩放** — Ctrl+滚轮缩放
+- **拖放打开** — 拖入任意 Markdown 或 Mermaid 文件即可查看
+- **体积小巧** — 小体积二进制，极少依赖
 
-## Keyboard Shortcuts
+## 快捷键
 
-| Key | Action |
+| 按键 | 操作 |
 |-----|--------|
-| `B` | Toggle folder browser |
-| `Tab` | Toggle table of contents (type to filter, Enter jumps) |
-| `A` | Annotate the selected text |
-| `F` / `Ctrl+F` | Open search |
-| `Enter` | Next search match |
-| `Ctrl+Shift+F` | Search results panel: every match beside the page |
-| `ESC` | Close overlay / Quit |
-| `T` | Open theme chooser |
-| `S` | Toggle stats overlay |
-| `Ctrl+C` | Copy selected text (or all if none selected) |
-| `Ctrl+A` | Select all text |
-| `Ctrl+Scroll` | Zoom in/out |
-| `Arrow keys` / `J/K` | Scroll |
-| `Mouse back/forward` / `Alt+←/→` | Walk link jumps with scroll restore |
-| `Page Up/Down` | Page scroll |
-| `Home/End` | Jump to start/end |
-| `:` | Enter edit mode |
-| `ESC` `ESC` | Exit edit mode |
-| `Ctrl+N` | New quick note — a fresh window, start typing right away; `Ctrl+S` names it via the save dialog. While the note is still empty, an **Open a file** button (`Ctrl+O`) in the preview pane picks an existing file instead |
-| `Ctrl+S` | Save (in edit mode) |
-| `Ctrl+Shift+S` | Save As: the editor writes the buffer to a new path, the viewer saves a copy, and the document continues under the new name |
-| `Ctrl+H` | Find and replace (in edit mode): Tab switches fields, Enter replaces, Ctrl+Enter replaces all |
-| `Ctrl+P` | Print / export to PDF; the preview picks the paper, orientation and margins |
-| `Ctrl+E` | Show/hide preview pane (in edit mode) |
-| `Ctrl+Shift+E` | Read the unsaved edits at full width; `Esc` returns to the source (in edit mode) |
-| `Ctrl+W` | Toggle word wrap (in edit mode) |
-| `Alt+↑` / `Alt+↓` | Move the current line, or the selected lines, up or down (in edit mode) |
-| `Ctrl+Alt+↑` / `Ctrl+Alt+↓` / `Alt+Click` | Add a caret above, below or at the click; `Esc` returns to one caret (in edit mode) |
-| `Ctrl+D` | Select the word, then add its next occurrence as another caret (in edit mode) |
-| `Ctrl+F4` | Close the current tab (viewer and edit mode) |
-| `Q` | Quit |
+| `B` | 打开/关闭文件夹浏览器 |
+| `Tab` | 打开/关闭目录（输入过滤，回车跳转） |
+| `A` | 为选中文字添加批注 |
+| `F` / `Ctrl+F` | 打开搜索 |
+| `Enter` | 下一个搜索匹配 |
+| `Ctrl+Shift+F` | 搜索结果面板：逐条显示在页面旁 |
+| `ESC` | 关闭浮层 / 退出 |
+| `T` | 打开主题选择器 |
+| `S` | 打开/关闭统计浮层 |
+| `Ctrl+C` | 复制选中文字（无选中则复制全文） |
+| `Ctrl+A` | 全选 |
+| `Ctrl+滚轮` | 缩放 |
+| `方向键` / `J/K` | 滚动 |
+| `鼠标前进/后退` / `Alt+←/→` | 在链接跳转历史间行走并恢复滚动位置 |
+| `Page Up/Down` | 翻页 |
+| `Home/End` | 跳到开头/结尾 |
+| `:` | 进入编辑模式 |
+| `ESC` `ESC` | 退出编辑模式 |
+| `Ctrl+N` | 新建快速笔记——一个新窗口，立即开始输入；`Ctrl+S` 通过保存对话框命名。笔记仍为空时，预览窗格的"打开文件"按钮（`Ctrl+O`）可改为打开现有文件 |
+| `Ctrl+S` | 保存（编辑模式） |
+| `Ctrl+Shift+S` | 另存为：编辑器把缓冲区写入新路径，查看器保存副本，文档以新名称继续 |
+| `Ctrl+H` | 查找替换（编辑模式）：Tab 切换输入框，回车替换，Ctrl+Enter 全部替换 |
+| `Ctrl+P` | 打印 / 导出 PDF；预览中选纸张、方向和页边距 |
+| `Ctrl+E` | 显示/隐藏预览窗格（编辑模式） |
+| `Ctrl+Shift+E` | 全宽阅读未保存的修改；`Esc` 返回源码（编辑模式） |
+| `Ctrl+W` | 切换自动换行（编辑模式） |
+| `Alt+↑` / `Alt+↓` | 上移/下移当前行或选中行（编辑模式） |
+| `Ctrl+Alt+↑` / `Ctrl+Alt+↓` / `Alt+点击` | 在上方、下方或点击处添加光标；`Esc` 回到单光标（编辑模式） |
+| `Ctrl+D` | 选中单词，再把它下一次出现加入多光标（编辑模式） |
+| `Ctrl+F4` | 关闭当前标签页（阅读与编辑模式） |
+| `Q` | 退出 |
 
-## Customization
+## 自定义
 
-**Shortcut profiles** (Settings → Keyboard shortcuts): pick **Windows**
-(`E` edits, `F1` opens help, `F` searches — the default), **Vim** (`/`
-searches, `:` edits, `?` helps), or **Custom**. The Edit button opens a
-shortcut editor: click an action, press its new key. Raw `:` and `?`
-always work regardless of profile.
+**快捷键方案**（设置 → 快捷键）：可选 **Windows**（`E` 编辑、`F1` 帮助、`F` 搜索——默认）、**Vim**（`/` 搜索、`:` 编辑、`?` 帮助）或 **自定义**。"编辑"按钮打开快捷键编辑器：点击一个操作，按下新按键。无论哪种方案，原始的 `:` 和 `?` 始终可用。
 
-Settings live in a plain INI file at `%APPDATA%\Tinta\settings.ini` (theme,
-zoom, window placement, word wrap, and more — written on exit). The `[Keys]`
-section holds the Custom profile's bindings if you prefer editing by hand:
-change a value and restart Tinta. Accepted values are letters, digits,
-`Tab`, `Space`, `F1`–`F12`, or any single character.
+设置保存在纯文本 INI 文件 `%APPDATA%\Tinta\settings.ini`（主题、缩放、窗口位置、自动换行等——退出时写入）。`[Keys]` 段保存自定义方案的按键绑定，方便手动编辑：改值后重启 Scher 生效。可接受的值有字母、数字、`Tab`、`Space`、`F1`–`F12` 或任意单个字符。
 
 ```ini
 [Keys]
@@ -161,125 +148,106 @@ edit=:
 help=?
 ```
 
-Ctrl combos (save, print, copy, word wrap…) are fixed. The help overlay and
-context menu show whatever keys are currently bound.
+Ctrl 组合键（保存、打印、复制、换行等）是固定的。帮助浮层和右键菜单显示当前实际绑定的按键。
 
-Other settings of note: `browserFocusPath=1` makes `B` open the file browser
-with the path box focused and selected, so paste + Enter jumps anywhere
-(also in Settings → General). `tinta --new` starts an untitled quick note
-from the command line. The print preview offers 12.7, 19.05 and 25.4 mm page
-margins; `printMarginMm=` takes any value from 5 to 50 for printing and PDF.
+其它值得注意的设置：`browserFocusPath=1` 让 `B` 打开文件浏览器时路径框自动聚焦并全选，粘贴 + 回车即可跳转任意位置（设置 → 常规 中也有）。`tinta --new` 从命令行启动无标题快速笔记。打印预览提供 12.7、19.05 和 25.4 mm 页边距；`printMarginMm=` 可取 5 到 50 之间的任意值，用于打印和 PDF。
 
-The interface language is available in Settings → General. It follows the
-Windows display language by default, or can be changed explicitly. Transient
-notifications and native error dialogs use the same language. Additional
-translations can be added through `languages.ini`; the app remains a native,
-single-file Windows viewer with no web runtime.
+界面语言在 设置 → 常规 中选择。默认跟随 Windows 显示语言，也可手动指定。临时通知和原生错误对话框使用同一语言。更多翻译可通过 `languages.ini` 添加；本应用仍是原生的单文件 Windows 查看器，没有网页运行时。
 
-## Usage
+## 用法
 
 ```bash
-# Open a Markdown file
-tinta.exe document.md
+# 打开 Markdown 文件
+scher.exe document.md
 
-# Open a Mermaid flowchart
-tinta.exe diagram.mmd
+# 打开 Mermaid 流程图
+scher.exe diagram.mmd
 
-# Open with light theme
-tinta.exe -l document.md
+# 以浅色主题打开
+scher.exe -l document.md
 
-# Show stats on startup
-tinta.exe -s document.md
+# 启动时显示统计
+scher.exe -s document.md
 
-# Register for Markdown and Mermaid files
-tinta.exe /register
+# 注册 Markdown 与 Mermaid 文件关联
+scher.exe /register
 ```
 
-Or simply drag and drop a `.md` or `.mmd` file onto the window.
+或者直接把 `.md` 或 `.mmd` 文件拖到窗口上。
 
-To copy a document's full path, right-click the document or its tab (the filename
-in the title bar when only one file is open) and choose
-**Copy file path**, beside **Reveal in Explorer**. The tab menu copies the clicked
-tab's path, even if another tab is active. Untitled notes have no path until saved.
+要复制文档完整路径，右键文档或其标签页（单文件时是标题栏中的文件名），选择**复制文件路径**，旁边还有**在资源管理器中显示**。标签菜单复制的是被点击标签的路径，即使另一个标签处于激活状态。未命名的笔记在保存前没有路径。
 
-## File Association
+## 文件关联
 
-On first launch, Tinta will ask if you want to set it as the default viewer for Markdown and Mermaid files. If you choose "No", you won't be asked again.
+首次启动时，Scher 会询问是否将它设为 Markdown 和 Mermaid 文件的默认查看器。选择"否"后不会再询问。
 
-To register Tinta as the default viewer later, run:
+之后要注册 Scher 为默认查看器，运行：
 ```bash
-tinta.exe /register
+scher.exe /register
 ```
 
-This registers `.md`, `.markdown`, and `.mmd` so you can select Tinta as their default app in Windows Settings.
+这会注册 `.md`、`.markdown` 和 `.mmd`，之后可在 Windows 设置中将 Scher 选为它们的默认应用。
 
-## Mermaid Support
+## Mermaid 支持
 
-Tinta natively renders twenty-two Mermaid diagram families in `.mmd` files and fenced `mermaid` code blocks — no web engine involved:
+Scher 原生渲染 22 个 Mermaid 图表族，适用于 `.mmd` 文件和 `mermaid` 围栏代码块——不涉及网页引擎：
 
-- **Flowcharts** (`flowchart` / `graph`) - TB/TD, BT, LR, RL layouts, `subgraph` groups, common node shapes, directed and labeled edges, `classDef`/`class`/`style` styling, and graceful handling of Mermaid 11 edge IDs and node configs
-- **Sequence diagrams** - participants and actors with aliases and `<br/>` breaks, every arrow family, activations, notes, `autonumber`, and `loop`/`alt`/`opt`/`par`/`critical`/`break` frames
-- **Class diagrams** - member blocks, stereotypes, `~T~` generics, all relation kinds with multiplicities, `note` and `note for`
-- **State diagrams** - `[*]` start/end, choice/fork/join, descriptions, directions, inline notes
-- **ER diagrams** - attribute tables with keys, full crow's-foot cardinality notation
-- **C4 diagrams** (`C4Context`/`C4Container`/`C4Component`/`C4Dynamic`/`C4Deployment`) - persons, systems, containers, and components in the standard C4 palette, nested boundaries, labeled relations
-- **Requirement diagrams** - typed requirement and element boxes with labeled relations
-- **Architecture diagrams** (`architecture-beta`) - services with line-art icons, groups, junctions, and side-anchored edges
-- **Block diagrams** (`block-beta`) - column grids, spans, spaces, nested blocks, block arrows, labeled edges
-- **Sankey diagrams** (`sankey-beta`) - ranked nodes with smooth flow ribbons
-- **Packet diagrams** (`packet-beta`) - 32-bit rows with labeled bit-range fields
-- **Kanban boards** - columns and cards with ticket, assignee, and priority metadata
-- **Treemaps** (`treemap-beta`) and **radar charts** (`radar-beta`)
-- **Pie charts**, **git graphs**, **gantt charts** (including the numeric `dateFormat X` axis), **mindmaps**, **timelines**, **user journeys**, **quadrant charts**, and **XY charts** (`xychart-beta`)
+- **流程图**（`flowchart` / `graph`）— TB/TD、BT、LR、RL 布局，`subgraph` 分组，常见节点形状，有向与带标签的边，`classDef`/`class`/`style` 样式，并优雅处理 Mermaid 11 的边 ID 和节点配置
+- **时序图** — 带别名和 `<br/>` 换行的参与者和参与者（actor），全部箭头族，激活区，备注，`autonumber`，以及 `loop`/`alt`/`opt`/`par`/`critical`/`break` 框架
+- **类图** — 成员块，构造型，`~T~` 泛型，所有关系类型与多重性，`note` 与 `note for`
+- **状态图** — `[*]` 起止，choice/fork/join，描述，方向，行内备注
+- **ER 图** — 带键的属性表，完整的鸦爪基数记法
+- **C4 图**（`C4Context`/`C4Container`/`C4Component`/`C4Dynamic`/`C4Deployment`）— 标准 C4 配色的人物、系统、容器和组件，嵌套边界，带标签的关系
+- **需求图** — 带类型的需求与元素框，带标签的关系
+- **架构图**（`architecture-beta`）— 线稿图标的服务，分组，连接点，侧锚定边
+- **块图**（`block-beta`）— 列网格，跨列，空位，嵌套块，块箭头，带标签的边
+- **桑基图**（`sankey-beta`）— 分层节点与平滑的流带
+- **包图**（`packet-beta`）— 32 位行与带标签的位段
+- **看板** — 列与卡片，带工单、负责人和优先级元数据
+- **矩形树图**（`treemap-beta`）与**雷达图**（`radar-beta`）
+- **饼图**、**git 图**、**甘特图**（含数值型 `dateFormat X` 轴）、**思维导图**、**时间线**、**用户旅程图**、**象限图** 和 **XY 图**（`xychart-beta`）
 
-Diagrams follow the active theme, print through Ctrl+P, export as SVG in HTML and as crisp images in DOCX, and their text is selectable and searchable like any other content. Anything a native renderer does not cover yet (composite states, zenuml) falls back to readable source code.
+图表跟随当前主题，通过 Ctrl+P 打印，在 HTML 中导出为 SVG、在 DOCX 中导出为清晰图片，文字与其它内容一样可选可搜。原生渲染器尚未覆盖的部分（复合状态、zenuml）回退为可读的源代码。
 
-## Themes
+## 主题
 
-Press `T` to open the theme chooser:
+按 `T` 打开主题选择器：
 
-**Light Themes:**
-- Paper - Warm sepia, literary feel
-- Sakura - Soft pink elegance
-- Arctic - Cool blue-white
-- Meadow - Fresh green
-- Dusk - Warm gray twilight
+**浅色主题：**
+- Paper - 温暖米色，文学感
+- Sakura - 柔和粉色的优雅
+- Arctic - 冷调蓝白
+- Meadow - 清新绿
+- Dusk - 暖灰暮色
 
-**Dark Themes:**
-- Midnight - Deep blue-black
-- Dracula - Purple-tinted dark
-- Forest - Deep green
-- Ember - Warm charcoal
-- Abyss - Pure black (OLED-friendly)
+**深色主题：**
+- Midnight - 深蓝黑
+- Dracula - 紫调深色
+- Forest - 深绿
+- Ember - 暖炭色
+- Abyss - 纯黑（OLED 友好）
 
-Custom themes live in `themes.ini` beside the portable executable, or in
-`%APPDATA%\Tinta`. Add `inlinecode` to a `[theme]` section to color inline code
-independently of fenced blocks:
+自定义主题放在便携可执行文件旁的 `themes.ini`，或 `%APPDATA%\Tinta` 中。在 `[theme]` 段添加 `inlinecode` 可让行内代码与围栏代码块使用不同颜色：
 
 ```ini
 code=334455
 inlinecode=B00020
 ```
 
-Here inline code is red and plain fenced code stays neutral. Syntax highlighting
-keeps its own colors. Without `inlinecode`, inline code uses `code` as before.
-The override is preserved when saving a theme from the editor and applies to
-HTML and DOCX exports. Native printing keeps Tinta's light print palette, set in
-the theme's fonts.
+这里行内代码是红色，普通围栏代码保持中性。语法高亮保留自己的颜色。没有 `inlinecode` 时，行内代码与之前一样使用 `code`。从主题编辑器保存主题时该覆盖会保留，并应用于 HTML 和 DOCX 导出。原生打印保持 Scher 的浅色打印配色，在主题字体中设置。
 
-For supported code-fence languages and aliases, including SQL, PowerShell, Java,
-PHP, HTML/XML, CSS, YAML and Markdown, see [Syntax highlighting](docs/syntax-highlighting.md).
-The [Frontmatter settings](docs/frontmatter.md) page controls property display and optional created/updated dates.
+受支持的代码围栏语言与别名（包括 SQL、PowerShell、Java、PHP、HTML/XML、CSS、YAML 和 Markdown）见[语法高亮](docs/syntax-highlighting.md)。
+[Frontmatter 设置](docs/frontmatter.md)控制属性显示与可选的创建/更新日期。
 
-Named, repeated and multiline [footnotes](docs/footnotes.md) include native navigation and HTML/DOCX export.
+命名、重复和多行[脚注](docs/footnotes.md)支持原生导航和 HTML/DOCX 导出。
 
-Individual H1-H6 and marked-text overrides are described in [Heading and highlight colours](docs/theme-colours.md).
+H1-H6 单独覆盖与标记文字覆盖见[标题与高亮颜色](docs/theme-colours.md)。
 
-## Dependencies
+## 依赖
 
-- [MD4C](https://github.com/mity/md4c) - Fast markdown parser (fetched automatically by CMake)
-- Windows Direct2D/DirectWrite (system libraries)
+- [MD4C](https://github.com/mity/md4c) - 快速 Markdown 解析器（CMake 自动拉取）
+- Windows Direct2D/DirectWrite（系统库）
 
-## License
+## 许可证
 
 MIT
