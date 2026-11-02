@@ -13,6 +13,7 @@
 #include <wincodec.h>
 #include <wrl/client.h>
 
+#include <map>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -632,7 +633,22 @@ struct App {
     std::vector<RemoteRow> remoteRows;     // current listing (dirs first)
     std::string remoteHost;                // ssh config alias being browsed
     std::string remoteDir;                 // listed directory, "" = home
-    std::vector<int> remotePicked;         // selected file rows
+    // The browser is a tree: folders expand in place (like a code editor's
+    // explorer) instead of replacing the listing. remoteRows stays the root
+    // listing; children are cached per directory and remoteTree is the
+    // flattened view rebuilt on every paint.
+    struct RemoteTreeNode {
+        std::wstring name;
+        bool isDir = false;
+        std::string path;      // absolute path on the remote machine
+        int depth = 0;
+        bool expanded = false;
+    };
+    std::vector<RemoteTreeNode> remoteTree;
+    std::vector<std::string> remoteExpanded;   // absolute dirs left open
+    std::map<std::string, std::vector<RemoteRow>> remoteChildren;
+    std::map<std::string, bool> remoteChildReady;
+    std::vector<std::string> remotePicked;     // selected file paths
     float remoteScroll = 0.0f;
     // A refresh re-lists the same directory, so the list keeps its scroll
     // position and selection; navigating to another directory resets both.

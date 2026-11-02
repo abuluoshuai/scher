@@ -107,6 +107,10 @@ bool remoteBrowserMouseDown(App& app, HWND hwnd, float x, float y);
 // The refresh button: re-lists the directory the browser is showing. Returns
 // false when there is no host or a listing is already in flight.
 bool remoteBrowserRefresh(App& app);
+
+// Flatten the browser's root listing and its expanded folders into the rows
+// the panel draws (also used by the tree tests).
+void remoteBuildTreeForTest(App& app);
 // The directory a refresh targets - always the browsed one, never derived
 // from the open document or a previous selection.
 std::string remoteRefreshDir(const App& app);

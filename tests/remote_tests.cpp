@@ -164,6 +164,11 @@ void browserWheel() {
         App::RemoteRow row;
         row.name = L"file" + std::to_wstring(i) + L".md";
         app.remoteRows.push_back(row);
+        // The paint pass flattens the tree; the wheel measures that list
+        App::RemoteTreeNode node;
+        node.name = row.name;
+        node.path = "/home/sch/file" + std::to_string(i) + ".md";
+        app.remoteTree.push_back(node);
     }
     // The list rect is normally published by the render pass
     app.remoteListRect = D2D1::RectF(60.0f, 150.0f, 1140.0f, 600.0f);
@@ -222,7 +227,7 @@ void browserRefreshTarget() {
     app.remoteHost = "wsl";
     app.remoteDir = "/home/sch/project";          // what the window shows
     app.currentFile = "ssh://wsl/home/sch/other/file.md";  // unrelated doc
-    app.remotePicked = {3, 7};                    // rows ticked earlier
+    app.remotePicked = {"/home/sch/old/a.md"};    // picked earlier
     app.remoteRows.clear();
     app.remoteRows.push_back({L"stale.md", false});
 
@@ -262,6 +267,49 @@ void remoteImagePaths() {
           "a document at the remote root resolves to the root");
 }
 
+// The browser is a tree: a folder expands in place and its listing nests
+// under it, instead of replacing the view like a navigation would.
+void browserTree() {
+    App app;
+    app.width = 1200;
+    app.height = 820;
+    app.remoteHost = "wsl";
+    app.remoteDir = "/home/sch";
+    app.remoteRows.clear();
+    App::RemoteRow dir;
+    dir.name = L"docs";
+    dir.isDir = true;
+    app.remoteRows.push_back(dir);
+    App::RemoteRow file;
+    file.name = L"note.md";
+    app.remoteRows.push_back(file);
+    app.remoteChildren["/home/sch/docs"] = {};
+    App::RemoteRow inner;
+    inner.name = L"inner.md";
+    app.remoteChildren["/home/sch/docs"].push_back(inner);
+    app.remoteChildReady["/home/sch/docs"] = true;
+
+    app.remoteExpanded = {"/home/sch/docs"};
+    app.remoteTree.clear();
+    remoteBuildTreeForTest(app);
+    check(app.remoteTree.size() == 3, "an open folder contributes its children");
+    check(app.remoteTree[0].depth == 0 && app.remoteTree[0].isDir,
+          "the folder sits at the root level");
+    check(app.remoteTree.size() > 1, "the open folder contributes a child row");
+    if (app.remoteTree.size() > 1) {
+        check(app.remoteTree[1].depth == 1,
+              "the child nests one level deeper");
+        check(app.remoteTree[1].path == "/home/sch/docs/inner.md",
+              "the child carries its full remote path");
+    }
+    check(app.remoteTree[2].depth == 0, "later root rows stay at the root");
+
+    app.remoteExpanded.clear();
+    app.remoteTree.clear();
+    remoteBuildTreeForTest(app);
+    check(app.remoteTree.size() == 2, "a collapsed folder hides its children");
+}
+
 }  // namespace
 
 // The SSH exchange itself, against a test double: remote_process_tests.cpp
@@ -276,6 +324,7 @@ int main() {
     wheelCoordinates();
     browserRefreshTarget();
     remoteImagePaths();
+    browserTree();
     failures += runRemoteProcessSuite();
     if (failures) {
         std::cerr << "remote tests failed: " << failures << '\n';

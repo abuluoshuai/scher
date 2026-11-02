@@ -329,20 +329,37 @@ void handleRemoteTask(App& app) {
     while (RemoteJob* job = remoteTakeFinished()) {
         if (app.remoteInFlight > 0) app.remoteInFlight--;
         if (job->kind == REMOTE_JOB_LIST) {
+            // A listing either fills the root of the tree or a folder the
+            // reader expanded; job->path says which one was asked for.
             if (job->ok) {
-                app.remoteDir = job->resolvedDir.empty() ? job->path
-                                                         : job->resolvedDir;
-                app.remoteRows.clear();
-                app.remoteRows.reserve(job->entries.size());
-                for (auto& e : job->entries)
-                    app.remoteRows.push_back({e.name, e.isDir});
-                if (!app.remoteKeepPlace) {
-                    app.remotePicked.clear();
-                    app.remoteScroll = 0.0f;
+                std::vector<App::RemoteRow> rows;
+                rows.reserve(job->entries.size());
+                for (auto& e : job->entries) rows.push_back({e.name, e.isDir});
+                const std::string resolved =
+                    job->resolvedDir.empty() ? job->path : job->resolvedDir;
+                if (job->path.empty() || job->path == app.remoteDir) {
+                    app.remoteDir = resolved;
+                    app.remoteRows = std::move(rows);
+                    if (!app.remoteKeepPlace) {
+                        app.remotePicked.clear();
+                        app.remoteScroll = 0.0f;
+                    }
+                    app.remoteKeepPlace = false;
+                    app.remoteMessage.clear();
+                } else {
+                    app.remoteChildren[resolved] = std::move(rows);
+                    app.remoteChildReady[resolved] = true;
                 }
-                app.remoteKeepPlace = false;
-                app.remoteMessage.clear();
+            } else if (job->path.empty() || job->path == app.remoteDir) {
+                app.remoteMessage = toWide(job->error);
             } else {
+                // A folder that vanished: drop its expansion so the tree does
+                // not keep showing a stale open node.
+                auto at = std::find(app.remoteExpanded.begin(),
+                                    app.remoteExpanded.end(), job->path);
+                if (at != app.remoteExpanded.end())
+                    app.remoteExpanded.erase(at);
+                app.remoteChildReady.erase(job->path);
                 app.remoteMessage = toWide(job->error);
             }
         } else if (job->ok) {
@@ -430,11 +447,79 @@ std::string remoteRefreshDir(const App& app) { return app.remoteDir; }
 // cannot queue up behind the first.
 bool remoteBrowserRefresh(App& app) {
     if (app.remoteHost.empty() || app.remoteInFlight > 0) return false;
+    // Re-list the browsed directory and every folder the tree has open, so a
+    // refresh shows what is on the machine now without losing the shape the
+    // reader opened.
+    const std::vector<std::string> open = app.remoteExpanded;
+    app.remoteChildren.clear();
+    app.remoteChildReady.clear();
     remoteBrowserNavigate(app, remoteRefreshDir(app));
-    // navigate() clears the flag; a refresh sets it afterwards so the
-    // completion keeps the list where the reader left it.
     app.remoteKeepPlace = true;
+    for (const std::string& dir : open) {
+        remoteStartList(app, app.remoteHost, dir);
+        app.remoteInFlight++;
+    }
     return true;
+}
+
+// --- remote browser tree ------------------------------------------------
+
+static std::string joinRemotePath(const std::string& dir,
+                                  const std::string& name) {
+    std::string base = dir;
+    if (base.empty()) base = "/";
+    if (base.back() != '/') base += '/';
+    return base + name;
+}
+
+static std::string utf8Name(const std::wstring& name) {
+    int len = WideCharToMultiByte(CP_UTF8, 0, name.c_str(), -1, nullptr, 0,
+                                  nullptr, nullptr);
+    std::string bytes(len > 0 ? len - 1 : 0, '\0');
+    if (len > 1)
+        WideCharToMultiByte(CP_UTF8, 0, name.c_str(), -1, &bytes[0], len,
+                            nullptr, nullptr);
+    return bytes;
+}
+
+static bool remoteIsExpanded(const App& app, const std::string& path) {
+    return std::find(app.remoteExpanded.begin(), app.remoteExpanded.end(),
+                     path) != app.remoteExpanded.end();
+}
+
+// Flatten root listing + every expanded directory into the rows the panel
+// draws. Rebuilt on each paint so collapsing is just state, not surgery.
+static void buildRemoteTree(App& app, const std::vector<App::RemoteRow>& rows,
+                            int depth) {
+    for (const auto& row : rows) {
+        App::RemoteTreeNode node;
+        node.name = row.name;
+        node.isDir = row.isDir;
+        node.depth = depth;
+        // Every row carries its full remote path: files need it for the
+        // selection set and for opening, folders for expansion state.
+        node.path = joinRemotePath(app.remoteDir, utf8Name(row.name));
+        if (row.isDir) node.expanded = remoteIsExpanded(app, node.path);
+        app.remoteTree.push_back(node);
+        if (!row.isDir || !node.expanded) continue;
+        auto ready = app.remoteChildReady.find(node.path);
+        if (ready != app.remoteChildReady.end() && ready->second) {
+            auto children = app.remoteChildren.find(node.path);
+            if (children != app.remoteChildren.end()) {
+                // Children resolve against their own directory, so the join
+                // below must use this node's path, not the root's.
+                const std::string saved = app.remoteDir;
+                app.remoteDir = node.path;
+                buildRemoteTree(app, children->second, depth + 1);
+                app.remoteDir = saved;
+            }
+        }
+    }
+}
+
+void remoteBuildTreeForTest(App& app) {
+    app.remoteTree.clear();
+    buildRemoteTree(app, app.remoteRows, 0);
 }
 
 void renderRemoteBrowser(App& app) {
@@ -550,14 +635,16 @@ void renderRemoteBrowser(App& app) {
                                        panel.bottom - footerH - dpi(app, 6.0f));
     app.remoteListRect = listRect;
     float rowH = rbRowHeight(app);
-    float contentH = (float)app.remoteRows.size() * rowH;
+    app.remoteTree.clear();
+    buildRemoteTree(app, app.remoteRows, 0);
+    float contentH = (float)app.remoteTree.size() * rowH;
     float viewH = listRect.bottom - listRect.top;
     float maxScroll = std::max(0.0f, contentH - viewH);
     app.remoteScroll = std::clamp(app.remoteScroll, 0.0f, maxScroll);
 
     app.renderTarget->PushAxisAlignedClip(listRect,
                                           D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    if (app.remoteRows.empty()) {
+    if (app.remoteTree.empty()) {
         drawTrimmed(app, app.remoteInFlight > 0 ? tr(app, "remote.loading")
                                                 : tr(app, "remote.empty"),
                     D2D1::RectF(listRect.left + dpi(app, 4.0f),
@@ -566,16 +653,16 @@ void renderRemoteBrowser(App& app) {
                     app.folderBrowserFormat, dimText(app, 0.45f));
     }
     int first = std::max(0, (int)(app.remoteScroll / rowH));
-    for (size_t i = (size_t)first; i < app.remoteRows.size(); i++) {
+    for (size_t i = (size_t)first; i < app.remoteTree.size(); i++) {
         float ry = listRect.top + rowH * (float)i - app.remoteScroll;
         if (ry > listRect.bottom) break;
         D2D1_RECT_F row = D2D1::RectF(listRect.left, ry, listRect.right,
                                       ry + rowH);
         if (row.bottom < listRect.top) continue;
-        const App::RemoteRow& item = app.remoteRows[i];
+        const App::RemoteTreeNode& item = app.remoteTree[i];
         bool picked = !item.isDir &&
                       std::find(app.remotePicked.begin(), app.remotePicked.end(),
-                                (int)i) != app.remotePicked.end();
+                                item.path) != app.remotePicked.end();
         bool hover = pointIn(row, (float)app.mouseX, (float)app.mouseY);
         if (hover || picked) {
             D2D1_COLOR_F bg = app.theme.accent;
@@ -585,8 +672,36 @@ void renderRemoteBrowser(App& app) {
                 D2D1::RoundedRect(row, dpi(app, 5.0f), dpi(app, 5.0f)),
                 app.brush);
         }
-        float gx = row.left + dpi(app, 12.0f);
+        float indent = dpi(app, 12.0f + 14.0f * (float)item.depth);
+        float gx = row.left + indent;
         float cy = (row.top + row.bottom) * 0.5f;
+        // Folders carry a disclosure arrow in front of the folder glyph, so
+        // a collapsed tree still shows that there is more underneath.
+        if (item.isDir) {
+            float chevron = dpi(app, 8.0f);
+            D2D1_COLOR_F arrow = dimText(app, 0.62f);
+            app.brush->SetColor(arrow);
+            if (item.expanded) {
+                app.renderTarget->DrawLine(
+                    D2D1::Point2F(gx, cy - chevron * 0.25f),
+                    D2D1::Point2F(gx + chevron * 0.5f, cy + chevron * 0.35f),
+                    app.brush, 1.2f);
+                app.renderTarget->DrawLine(
+                    D2D1::Point2F(gx + chevron * 0.5f, cy + chevron * 0.35f),
+                    D2D1::Point2F(gx + chevron, cy - chevron * 0.25f),
+                    app.brush, 1.2f);
+            } else {
+                app.renderTarget->DrawLine(
+                    D2D1::Point2F(gx, cy - chevron * 0.5f),
+                    D2D1::Point2F(gx + chevron * 0.6f, cy),
+                    app.brush, 1.2f);
+                app.renderTarget->DrawLine(
+                    D2D1::Point2F(gx + chevron * 0.6f, cy),
+                    D2D1::Point2F(gx, cy + chevron * 0.5f),
+                    app.brush, 1.2f);
+            }
+        }
+        gx += dpi(app, 12.0f);
         if (item.isDir)
             drawFolderGlyph(app, gx, cy, dpi(app, 13.0f), dimText(app, 0.7f));
         else
@@ -663,20 +778,8 @@ void renderRemoteBrowser(App& app) {
 void remoteBrowserOpenSelection(App& app) {
     if (app.remotePicked.empty() || app.remoteHost.empty()) return;
     std::vector<std::string> uris;
-    for (int idx : app.remotePicked) {
-        if (idx < 0 || idx >= (int)app.remoteRows.size()) continue;
-        if (app.remoteRows[idx].isDir) continue;
-        std::string file = app.remoteDir;
-        if (file.empty() || file.back() != '/') file += "/";
-        // std::string is bytes; the wide name comes straight from the
-        // listing's UTF-8, so convert back to UTF-8 explicitly
-        int len = WideCharToMultiByte(CP_UTF8, 0, app.remoteRows[idx].name.c_str(),
-                                      -1, nullptr, 0, nullptr, nullptr);
-        std::string nameBytes(len > 0 ? len - 1 : 0, '\0');
-        if (len > 1)
-            WideCharToMultiByte(CP_UTF8, 0, app.remoteRows[idx].name.c_str(), -1,
-                                &nameBytes[0], len, nullptr, nullptr);
-        file += nameBytes;
+    for (const std::string& file : app.remotePicked) {
+        if (file.empty()) continue;
         uris.push_back(remotePathMake(app.remoteHost, file));
     }
     app.showRemoteBrowser = false;
@@ -709,24 +812,30 @@ bool remoteBrowserMouseDown(App& app, HWND hwnd, float x, float y) {
             remoteBrowserRefresh(app);
         } else if (code >= kRBBrowseRow) {
             int idx = code - kRBBrowseRow;
-            if (idx >= 0 && idx < (int)app.remoteRows.size()) {
-                const auto& item = app.remoteRows[idx];
+            if (idx >= 0 && idx < (int)app.remoteTree.size()) {
+                const App::RemoteTreeNode item = app.remoteTree[(size_t)idx];
                 if (item.isDir) {
-                    std::string dir = app.remoteDir;
-                    if (dir.empty() || dir.back() != '/') dir += "/";
-                    int len = WideCharToMultiByte(CP_UTF8, 0, item.name.c_str(),
-                                                  -1, nullptr, 0, nullptr, nullptr);
-                    std::string nameBytes(len > 0 ? len - 1 : 0, '\0');
-                    if (len > 1)
-                        WideCharToMultiByte(CP_UTF8, 0, item.name.c_str(), -1,
-                                            &nameBytes[0], len, nullptr, nullptr);
-                    dir += nameBytes;
-                    remoteBrowserNavigate(app, dir);
+                    // Folders open in place, like a file explorer - the
+                    // listing below them is fetched once and cached.
+                    auto at = std::find(app.remoteExpanded.begin(),
+                                        app.remoteExpanded.end(), item.path);
+                    if (at != app.remoteExpanded.end()) {
+                        app.remoteExpanded.erase(at);
+                    } else {
+                        app.remoteExpanded.push_back(item.path);
+                        const bool known =
+                            app.remoteChildReady.find(item.path) !=
+                            app.remoteChildReady.end();
+                        if (!known && app.remoteInFlight == 0) {
+                            remoteStartList(app, app.remoteHost, item.path);
+                            app.remoteInFlight++;
+                        }
+                    }
                 } else {
                     auto it = std::find(app.remotePicked.begin(),
-                                        app.remotePicked.end(), idx);
+                                        app.remotePicked.end(), item.path);
                     if (it == app.remotePicked.end())
-                        app.remotePicked.push_back(idx);
+                        app.remotePicked.push_back(item.path);
                     else
                         app.remotePicked.erase(it);
                 }
@@ -766,7 +875,7 @@ bool remoteBrowserWheel(App& app, float delta, float x, float y) {
     float rowH = rbRowHeight(app);
     const D2D1_RECT_F& list = app.remoteListRect;
     float viewH = std::max(rowH, list.bottom - list.top);
-    float maxScroll = std::max(0.0f, (float)app.remoteRows.size() * rowH - viewH);
+    float maxScroll = std::max(0.0f, (float)app.remoteTree.size() * rowH - viewH);
     app.remoteScroll = std::clamp(app.remoteScroll + delta, 0.0f, maxScroll);
     InvalidateRect(app.hwnd, nullptr, FALSE);
     return true;
