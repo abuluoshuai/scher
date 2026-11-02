@@ -268,6 +268,22 @@ void remoteImages(App& app, const char* base) {
 }
 }
 
+
+// Remote images arrive as bytes, never as a local path: they decode through
+// the same bounded pipeline as a file on disk. The guards matter because this
+// runs on a worker thread with no UI around it.
+void decodingFromMemory(App& app) {
+    DecodedImage image;
+    check(decodeImageBytes(app.wicFactory, nullptr, 16, 256, image) ==
+              E_INVALIDARG && image.pixels.empty(),
+          "null bytes are refused, with no partial pixels");
+    check(decodeImageBytes(app.wicFactory, "x", 0, 256, image) == E_INVALIDARG,
+          "empty bytes are refused");
+    check(FAILED(decodeImageBytes(app.wicFactory, "not an image", 12, 256, image)),
+          "garbage bytes fail instead of producing a bitmap");
+    check(image.pixels.empty(), "a failed decode leaves no pixels behind");
+}
+
 int runImageTests(const char* remoteBase) {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     auto state = std::make_unique<App>();
@@ -276,6 +292,7 @@ int runImageTests(const char* remoteBase) {
         0, 0, 1050, 900, nullptr, nullptr, nullptr, nullptr);
     if (!app.hwnd || !initD2D(app) || !createRenderTarget(app)) return 2;
     generateAssets(app);
+    decodingFromMemory(app);
     decoding(app);
     ownership(app);
     mixedLayout(app);

@@ -82,3 +82,83 @@ HRESULT decodeImageFile(IWICImagingFactory* factory, const wchar_t* path,
         return E_OUTOFMEMORY;
     }
 }
+
+// Shared tail of both entry points: frame 0 -> bounded scale -> BGRA copy.
+static HRESULT decodeFrameToImage(IWICImagingFactory* factory,
+                                 IWICBitmapFrameDecode* frame,
+                                 UINT maxDimension,
+                                 DecodedImage& output) noexcept {
+    UINT sourceW = 0, sourceH = 0;
+    HRESULT hr = frame->GetSize(&sourceW, &sourceH);
+    if (FAILED(hr)) return hr;
+    if (!sourceW || !sourceH || sourceW > IMAGE_SOURCE_MAX_DIMENSION ||
+        sourceH > IMAGE_SOURCE_MAX_DIMENSION ||
+        static_cast<uint64_t>(sourceW) * sourceH > IMAGE_SOURCE_MAX_PIXELS)
+        return WINCODEC_ERR_IMAGESIZEOUTOFRANGE;
+
+    const auto size = boundedImageSize(sourceW, sourceH, maxDimension);
+    ComPtr<IWICBitmapSource> source = frame;
+    ComPtr<IWICBitmapScaler> scaler;
+    if (size.width != sourceW || size.height != sourceH) {
+        hr = factory->CreateBitmapScaler(scaler.GetAddressOf());
+        if (FAILED(hr)) return hr;
+        hr = scaler->Initialize(frame, size.width, size.height,
+                                WICBitmapInterpolationModeFant);
+        if (FAILED(hr)) return hr;
+        source = scaler;
+    }
+    ComPtr<IWICFormatConverter> converter;
+    hr = factory->CreateFormatConverter(converter.GetAddressOf());
+    if (FAILED(hr)) return hr;
+    hr = converter->Initialize(source.Get(), GUID_WICPixelFormat32bppPBGRA,
+                               WICBitmapDitherTypeNone, nullptr, 0.0,
+                               WICBitmapPaletteTypeCustom);
+    if (FAILED(hr)) return hr;
+
+    DecodedImage decoded;
+    decoded.width = size.width;
+    decoded.height = size.height;
+    double dpiX = 96.0, dpiY = 96.0;
+    if (FAILED(frame->GetResolution(&dpiX, &dpiY))) dpiX = dpiY = 96.0;
+    if (!std::isfinite(dpiX) || dpiX < 1.0 || dpiX > 9600.0) dpiX = 96.0;
+    if (!std::isfinite(dpiY) || dpiY < 1.0 || dpiY > 9600.0) dpiY = 96.0;
+    decoded.dpiX = static_cast<float>(dpiX * size.width / sourceW);
+    decoded.dpiY = static_cast<float>(dpiY * size.height / sourceH);
+    const UINT stride = size.width * 4;
+    const UINT bytes = stride * size.height;
+    decoded.pixels.resize(bytes);
+    hr = converter->CopyPixels(nullptr, stride, bytes, decoded.pixels.data());
+    if (FAILED(hr)) return hr;
+    output = std::move(decoded);
+    return S_OK;
+}
+
+HRESULT decodeImageBytes(IWICImagingFactory* factory, const void* data,
+                         size_t size, UINT maxDimension,
+                         DecodedImage& output) noexcept {
+    output = {};
+    if (!factory || !data || !size || !maxDimension) return E_INVALIDARG;
+    try {
+        ComPtr<IWICStream> stream;
+        HRESULT hr = factory->CreateStream(stream.GetAddressOf());
+        if (FAILED(hr)) return hr;
+        hr = stream->InitializeFromMemory(
+            const_cast<BYTE*>(static_cast<const BYTE*>(data)),
+            static_cast<DWORD>(size));
+        if (FAILED(hr)) return hr;
+
+        ComPtr<IWICBitmapDecoder> decoder;
+        hr = factory->CreateDecoderFromStream(
+            stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand,
+            decoder.GetAddressOf());
+        if (FAILED(hr)) return hr;
+        ComPtr<IWICBitmapFrameDecode> frame;
+        hr = decoder->GetFrame(0, frame.GetAddressOf());
+        if (FAILED(hr)) return hr;
+        return decodeFrameToImage(factory, frame.Get(), maxDimension, output);
+    } catch (const std::bad_alloc&) {
+        return E_OUTOFMEMORY;
+    } catch (const std::length_error&) {
+        return E_OUTOFMEMORY;
+    }
+}

@@ -21,6 +21,11 @@ bool remotePathIs(const std::string& path);            // starts with ssh://
 std::string remotePathHost(const std::string& path);   // alias
 std::string remotePathFile(const std::string& path);   // /abs/remote/path
 std::string remotePathMake(const std::string& host, const std::string& file);
+
+// Resolve an image reference from a remote document into a path on that
+// machine: relative to the document, or absolute / home-relative as written.
+std::string remoteImagePathFor(const std::string& docUri,
+                               const std::string& src);
 // Directory part of a remote file URI ("/a/b/c.md" -> "/a/b"), "/" at root
 std::string remoteParentDir(const std::string& dir);
 

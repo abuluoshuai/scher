@@ -144,6 +144,22 @@ static int catFile(const std::wstring& rel) {
     return 0;
 }
 
+
+// Optional request log: FAKE_SSH_LOG=<file> appends every script the app
+// sends, so a test can prove which remote files were actually fetched
+// (documents, images) without a screenshot.
+static void logScript(const std::wstring& script) {
+    wchar_t path[MAX_PATH];
+    DWORD n = GetEnvironmentVariableW(L"FAKE_SSH_LOG", path, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return;
+    FILE* f = _wfopen(path, L"ab");
+    if (!f) return;
+    std::string utf8 = wideToUtf8(script);
+    fwrite(utf8.data(), 1, utf8.size(), f);
+    fputc('\n', f);
+    fclose(f);
+}
+
 int main(int argc, char** argv) {
     // Byte-exact like a real ssh: text-mode stdout would turn every LF into
     // CRLF and the file content would no longer match what is on "disk".
@@ -158,6 +174,7 @@ int main(int argc, char** argv) {
     size_t got;
     while ((got = fread(buf, 1, sizeof(buf), stdin)) > 0) script.append(buf, got);
     std::wstring w = utf8ToWide(script);
+    logScript(w);
 
     if (argc < 2) return 2;
 

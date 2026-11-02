@@ -221,6 +221,19 @@ std::string remotePathFile(const std::string& path) {
     return path.substr(slash);
 }
 
+// Where an image reference inside a remote document points on the document's
+// own machine: relative references sit next to the document, while "/x" and
+// "~/x" address the remote root and the login home. Nothing here touches the
+// local file system.
+std::string remoteImagePathFor(const std::string& docUri,
+                               const std::string& src) {
+    if (src.rfind("/", 0) == 0 || src.rfind("~/", 0) == 0) return src;
+    std::string dir = remoteParentDir(remotePathFile(docUri));
+    if (dir.empty() || dir == ".") dir = "/";
+    if (dir.back() != '/') dir += '/';
+    return dir + src;
+}
+
 std::string remotePathMake(const std::string& host, const std::string& file) {
     std::string p = "ssh://" + host;
     if (file.empty()) return p;

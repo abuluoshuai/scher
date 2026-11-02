@@ -246,6 +246,22 @@ void browserRefreshTarget() {
     // and drive_remote_wsl_real.py covers the rest against real sshd.
 }
 
+// Images inside a remote document resolve on the document's machine, never
+// against this Windows drive.
+void remoteImagePaths() {
+    const std::string doc = "ssh://box/home/sch/notes/post.md";
+    check(remoteImagePathFor(doc, "shot.png") == "/home/sch/notes/shot.png",
+          "a relative image sits next to the document");
+    check(remoteImagePathFor(doc, "./img/a.png") == "/home/sch/notes/./img/a.png",
+          "a ./ reference keeps its form and stays relative");
+    check(remoteImagePathFor(doc, "/var/img/a.png") == "/var/img/a.png",
+          "an absolute reference is kept as written");
+    check(remoteImagePathFor(doc, "~/pics/a.png") == "~/pics/a.png",
+          "a home-relative reference stays home-relative for the shell");
+    check(remoteImagePathFor("ssh://box/doc.md", "a.png") == "/a.png",
+          "a document at the remote root resolves to the root");
+}
+
 }  // namespace
 
 // The SSH exchange itself, against a test double: remote_process_tests.cpp
@@ -259,6 +275,7 @@ int main() {
     browserWheel();
     wheelCoordinates();
     browserRefreshTarget();
+    remoteImagePaths();
     failures += runRemoteProcessSuite();
     if (failures) {
         std::cerr << "remote tests failed: " << failures << '\n';

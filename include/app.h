@@ -318,7 +318,10 @@ struct App {
         int width = 0;
         int height = 0;
         bool failed = false;
-        bool pending = false;  // remote image download in flight
+        bool pending = false;
+        // Pinned entries are never evicted: remote images cost an ssh round
+        // trip to fetch again, so every image a document shows stays cached.
+        bool pinned = false;  // remote image download in flight
         size_t bytes = 0;      // estimated decoded bitmap memory
         unsigned long long lastUsed = 0;
     };
@@ -353,7 +356,9 @@ struct App {
                imageCacheBytes > IMAGE_CACHE_BUDGET) {
             auto victim = imageCache.end();
             for (auto candidate = imageCache.begin(); candidate != imageCache.end(); ++candidate) {
-                if (candidate->first == key || candidate->second.pending) continue;
+                if (candidate->first == key || candidate->second.pending ||
+                    candidate->second.pinned)
+                    continue;
                 if (victim == imageCache.end() ||
                     candidate->second.lastUsed < victim->second.lastUsed) {
                     victim = candidate;

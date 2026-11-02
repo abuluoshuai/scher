@@ -9,6 +9,7 @@
 #include "mermaid_ext.h"
 #include "math_render.h"
 #include "image_loader.h"
+#include "remote.h"
 
 #include <algorithm>
 #include <cctype>
@@ -2573,6 +2574,37 @@ static void asyncImageWorker(HWND hwnd, UINT maxDimension,
         delete delivered;
 }
 
+// Remote images download over ssh on a worker thread: a synchronous read
+// would freeze layout for the length of the round trip, exactly like the
+// http(s) case (#44).
+static void asyncRemoteImageWorker(HWND hwnd, UINT maxDimension,
+                                   std::string host, std::string file,
+                                   std::unique_ptr<AsyncImageResult> result) {
+    const HRESULT apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    try {
+        if (SUCCEEDED(apartment)) {
+            std::string bytes;
+            std::string error;
+            if (remoteReadBlocking(host, file, bytes, error) && !bytes.empty()) {
+                Microsoft::WRL::ComPtr<IWICImagingFactory> wic;
+                if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(wic.GetAddressOf())))) {
+                    result->ok = SUCCEEDED(decodeImageBytes(
+                        wic.Get(), bytes.data(), bytes.size(), maxDimension,
+                        result->image));
+                }
+            }
+        }
+    } catch (const std::exception&) {
+        result->ok = false;
+    }
+    if (SUCCEEDED(apartment)) CoUninitialize();
+    auto* delivered = result.release();
+    if (!PostMessageW(hwnd, WM_APP_IMAGE_READY, 0,
+                      reinterpret_cast<LPARAM>(delivered)))
+        delete delivered;
+}
+
 // SVG images rasterize at 2x through the Direct2D SVG renderer
 // (ID2D1DeviceContext5, Windows 10 1703+). Shapes, paths, and gradients
 // render; <text> elements are not supported by D2D's SVG subset.
@@ -2712,7 +2744,23 @@ static bool loadSvgBitmap(App& app, const std::wstring& path,
 }
 
 static App::ImageEntry& getOrLoadImage(App& app, const std::string& src) {
-    auto it = app.imageCache.find(src);
+    // The cache key is the reference itself for local/http images, and the
+    // resolved remote path for remote ones - so two documents that both say
+    // "shot.png" cannot swap pictures. Lookup and store must use the same
+    // key, or every layout pass misses and re-downloads.
+    const bool isUrl = (src.rfind("http://", 0) == 0 || src.rfind("https://", 0) == 0);
+    const bool dataUri = src.rfind("data:", 0) == 0;
+    const bool remote = !isUrl && !dataUri && remotePathIs(app.currentFile);
+    std::string remoteFile;
+    std::string remoteHost;
+    std::string key = src;
+    if (remote) {
+        remoteFile = remoteImagePathFor(app.currentFile, src);
+        remoteHost = remotePathHost(app.currentFile);
+        key = src + "\x1f" + remoteHost + ":" + remoteFile;
+    }
+
+    auto it = app.imageCache.find(key);
     if (it != app.imageCache.end()) {
         app.touchImageCacheEntry(it->second);
         return it->second;
@@ -2722,15 +2770,14 @@ static App::ImageEntry& getOrLoadImage(App& app, const std::string& src) {
     entry.failed = true;  // assume failure
 
     if (!app.wicFactory || !app.renderTarget) {
-        app.storeImageCacheEntry(src, std::move(entry));
-        return app.imageCache[src];
+        app.storeImageCacheEntry(key, std::move(entry));
+        return app.imageCache[key];
     }
 
     std::wstring widePath;
 
     // Remote images load on a worker thread — a synchronous download here
     // stalled layout for seconds per unreachable URL (#44)
-    bool isUrl = (src.rfind("http://", 0) == 0 || src.rfind("https://", 0) == 0);
     if (isUrl) {
         entry.failed = false;
         entry.pending = true;
@@ -2746,6 +2793,27 @@ static App::ImageEntry& getOrLoadImage(App& app, const std::string& src) {
             failed.failed = true;
         }
         return app.imageCache[src];
+    } else if (remote) {
+        // The document lives on another machine: images come from there too,
+        // fetched over the same ssh connection in the background. The cache
+        // key carries the resolved remote path so two documents that both
+        // reference "shot.png" cannot swap pictures.
+        entry.failed = false;
+        entry.pending = true;
+        entry.pinned = true;   // a re-download costs a full ssh round trip
+        app.storeImageCacheEntry(key, std::move(entry));
+        try {
+            auto result = std::make_unique<AsyncImageResult>();
+            result->src = key;
+            std::thread(asyncRemoteImageWorker, app.hwnd,
+                        app.renderTarget->GetMaximumBitmapSize(), remoteHost,
+                        remoteFile, std::move(result)).detach();
+        } catch (const std::exception&) {
+            auto& failed = app.imageCache.at(key);
+            failed.pending = false;
+            failed.failed = true;
+        }
+        return app.imageCache[key];
     } else {
         // Resolve relative to the current file's directory. Both strings are
         // UTF-8 and must be widened explicitly: a narrow filesystem::path
@@ -2780,8 +2848,8 @@ static App::ImageEntry& getOrLoadImage(App& app, const std::string& src) {
                                  app.renderTarget->GetMaximumBitmapSize(), image)))
         createDecodedBitmap(app, image, entry);
 
-    app.storeImageCacheEntry(src, std::move(entry));
-    return app.imageCache[src];
+    app.storeImageCacheEntry(key, std::move(entry));
+    return app.imageCache[key];
 }
 
 static void layoutImage(App& app, const ElementPtr& elem, float& y, float indent, float maxWidth) {
@@ -3474,6 +3542,8 @@ void completeAsyncImage(App& app, void* asyncResult) {
 
     App::ImageEntry entry;
     entry.failed = true;
+    // Remote entries stay pinned: re-downloading one costs an ssh round trip.
+    entry.pinned = pending->second.pinned;
     if (result->ok) createDecodedBitmap(app, result->image, entry);
     app.storeImageCacheEntry(result->src, std::move(entry));
 

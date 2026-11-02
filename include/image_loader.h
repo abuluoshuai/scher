@@ -27,4 +27,10 @@ struct DecodedImage {
 HRESULT decodeImageFile(IWICImagingFactory* factory, const wchar_t* path,
                        UINT maxDimension, DecodedImage& output) noexcept;
 
+// Same pipeline for bytes that never touch this file system: images read over
+// ssh from the document's own machine, and any future in-memory source.
+HRESULT decodeImageBytes(IWICImagingFactory* factory, const void* data,
+                        size_t size, UINT maxDimension,
+                        DecodedImage& output) noexcept;
+
 #endif
