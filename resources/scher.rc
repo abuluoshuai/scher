@@ -1,7 +1,7 @@
-// Tinta Windows Resource File
+// Scher Windows Resource File
 // Icon with lowest ID value placed first to ensure application icon
 // remains consistent on all systems.
-IDI_ICON1 ICON "tinta.ico"
+IDI_ICON1 ICON "scher.ico"
 
 // Version metadata. The numbers come from CMake (project VERSION) via
 // TINTA_VERSION_* compile definitions so the exe always self-describes
@@ -38,12 +38,12 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName",      "oipoistar"
-            VALUE "FileDescription",  "Tinta - fast, lightweight Markdown and Mermaid viewer"
+            VALUE "FileDescription",  "Scher - fast, lightweight Markdown and Mermaid viewer"
             VALUE "FileVersion",      TINTA_VERSION_STRING
-            VALUE "InternalName",     "tinta"
-            VALUE "LegalCopyright",   "Copyright (c) oipoistar. MIT License."
-            VALUE "OriginalFilename", "tinta.exe"
-            VALUE "ProductName",      "Tinta"
+            VALUE "InternalName",     "scher"
+            VALUE "LegalCopyright",   "Copyright (c) 2024 oipoistar. MIT License."
+            VALUE "OriginalFilename", "scher.exe"
+            VALUE "ProductName",      "Scher"
             VALUE "ProductVersion",   TINTA_VERSION_STRING
         END
     END

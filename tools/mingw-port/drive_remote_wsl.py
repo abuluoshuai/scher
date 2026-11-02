@@ -19,7 +19,7 @@ user32.SetProcessDPIAware()
 
 ROOT = r"E:\WorkBuddy\翠花工具包\Markdown阅读器"
 BUILD = os.path.join(ROOT, "build")
-EXE = os.path.join(BUILD, "tinta.exe")
+EXE = os.path.join(BUILD, "scher.exe")
 INI = os.path.join(BUILD, "settings.ini")
 SSH = r"C:\Windows\System32\OpenSSH\ssh.exe"
 KNOWN = os.path.join(os.environ["TEMP"], "tinta_test_known_hosts")
@@ -60,17 +60,17 @@ def row_of(rows, name):
 
 
 def procs():
-    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq tinta.exe",
+    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq scher.exe",
                           "/FO", "CSV", "/NH"],
                          capture_output=True, text=True, errors="replace").stdout
-    return [l for l in out.splitlines() if l.lower().startswith('"tinta.exe"')]
+    return [l for l in out.splitlines() if l.lower().startswith('"scher.exe"')]
 
 
 def kill_all():
     for _ in range(25):
         if not procs():
             return
-        subprocess.run(["taskkill", "/IM", "tinta.exe", "/F"], capture_output=True)
+        subprocess.run(["taskkill", "/IM", "scher.exe", "/F"], capture_output=True)
         time.sleep(0.3)
 
 
@@ -184,7 +184,7 @@ def main():
     click(hwnd, 1000, 704)          # Open
     time.sleep(2.5)
     t = title(hwnd)
-    check(t.startswith("Tinta - "), "real-ssh multi-select opened tabs", t)
+    check(t.startswith("Scher - "), "real-ssh multi-select opened tabs", t)
 
     stored = io.open(INI, encoding="utf-8", errors="replace").read()
     remotes = [l for l in stored.splitlines() if l.startswith("remoteRecent=")]

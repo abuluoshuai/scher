@@ -1247,7 +1247,7 @@ static void scheduleReparse(App& app) {
         size_t lastSep = wpath.find_last_of(L"\\/");
         std::wstring fname = (lastSep != std::wstring::npos) ? wpath.substr(lastSep + 1) : wpath;
         if (fname.empty()) fname = tr(app, "title.untitled");  // quick note
-        std::wstring title = L"Tinta - * " + fname;
+        std::wstring title = L"Scher - * " + fname;
         SetWindowTextW(app.hwnd, title.c_str());
     }
     // No preview pane and no word count — nothing to keep in sync until
@@ -1602,7 +1602,7 @@ void exitEditMode(App& app) {
         // The empty viewer is the start page now; the tab label follows
         if (!app.tabs.empty() && app.activeTab >= 0 &&
             app.activeTab < (int)app.tabs.size()) {
-            app.tabs[app.activeTab].title = L"Tinta";
+            app.tabs[app.activeTab].title = L"Scher";
         }
     } else if (file) {
         std::stringstream buf;

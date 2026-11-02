@@ -1,6 +1,6 @@
 # Code syntax highlighting
 
-Add a language after the opening Markdown fence to colour code in Tinta:
+Add a language after the opening Markdown fence to colour code in Scher:
 
 ````markdown
 ```sql
@@ -8,7 +8,7 @@ SELECT employee_id FROM employees WHERE active = 1;
 ```
 ````
 
-Language labels are case-insensitive. Labels that Tinta does not recognise,
+Language labels are case-insensitive. Labels that Scher does not recognise,
 and fences without a language, display as plain code.
 
 | Language | Fence labels |
@@ -57,5 +57,5 @@ HTML and DOCX exports retain their existing plain-code formatting; native viewin
 and printing use syntax colours.
 
 Open [the mixed language sample](../tests/fixtures/syntax-languages.md) or
-[the multiline and alias sample](../tests/fixtures/syntax-multiline.md) in Tinta
+[the multiline and alias sample](../tests/fixtures/syntax-multiline.md) in Scher
 to try the new rules.

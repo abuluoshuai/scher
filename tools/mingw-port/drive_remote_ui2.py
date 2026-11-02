@@ -14,7 +14,7 @@ user32.SetProcessDPIAware()
 
 ROOT = r"E:\WorkBuddy\翠花工具包\Markdown阅读器"
 BUILD = os.path.join(ROOT, "build")
-EXE = os.path.join(BUILD, "tinta.exe")
+EXE = os.path.join(BUILD, "scher.exe")
 INI = os.path.join(BUILD, "settings.ini")
 TMP = os.environ["TEMP"]
 FAKE_ROOT = os.path.join(TMP, "fake-remote")
@@ -31,17 +31,17 @@ def check(ok, what, extra=""):
 
 
 def procs():
-    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq tinta.exe",
+    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq scher.exe",
                           "/FO", "CSV", "/NH"],
                          capture_output=True, text=True, errors="replace").stdout
-    return [l for l in out.splitlines() if l.lower().startswith('"tinta.exe"')]
+    return [l for l in out.splitlines() if l.lower().startswith('"scher.exe"')]
 
 
 def kill_all():
     for _ in range(25):
         if not procs():
             return
-        subprocess.run(["taskkill", "/IM", "tinta.exe", "/F"], capture_output=True)
+        subprocess.run(["taskkill", "/IM", "scher.exe", "/F"], capture_output=True)
         time.sleep(0.3)
 
 
@@ -114,7 +114,7 @@ def main():
         print("FAIL: no window")
         return 1
     t = title(hwnd)
-    check(t == "Tinta - plain.md", "session restored a remote tab", t)
+    check(t == "Scher - plain.md", "session restored a remote tab", t)
 
     # Local row in the recent-documents menu (first section)
     click(hwnd, 1200 - 3 * 46 - 34 - 17, 20)
@@ -122,7 +122,7 @@ def main():
     click(hwnd, 700, 87)
     time.sleep(1.2)
     t = title(hwnd)
-    check(t == "Tinta - 本地样例.md", "menu opened a local recent file", t)
+    check(t == "Scher - 本地样例.md", "menu opened a local recent file", t)
 
     # Browser: navigate into the Chinese-named subdirectory and open its file
     click(hwnd, 20, 20)
@@ -134,7 +134,7 @@ def main():
     click(hwnd, 1000, 704)         # Open
     time.sleep(1.8)
     t = title(hwnd)
-    check(t == "Tinta - 深层.md", "browser navigated into a CJK directory", t)
+    check(t == "Scher - 深层.md", "browser navigated into a CJK directory", t)
 
     user32.PostMessageW(hwnd, 0x0010, 0, 0)
     time.sleep(1.5)

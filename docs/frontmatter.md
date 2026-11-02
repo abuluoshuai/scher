@@ -1,7 +1,7 @@
 # Frontmatter properties
 
 Settings → Frontmatter controls the property strip above a Markdown document.
-An ordered table lists keys Tinta has encountered. Drag a row's handle to change
+An ordered table lists keys Scher has encountered. Drag a row's handle to change
 its order, select its left/right group, and choose whether to show its label.
 The preview uses the current document, or sample properties when none exist.
 At narrow widths, the right group stacks below the left group.
@@ -28,7 +28,7 @@ Hidden switch disables the strip and automatic date maintenance together.
 - `updated` refreshes on every explicit editor save, including a clean buffer
   and editor Save As.
 - `created` keeps its existing value. If absent, empty or null, it is initialized
-  using the UTC time when Tinta first encountered this document's frontmatter
+  using the UTC time when Scher first encountered this document's frontmatter
   during the current session. That time is recorded in memory until a successful
   save. It is not inferred from the file's creation time.
 - Missing enabled fields are inserted into an existing frontmatter block.

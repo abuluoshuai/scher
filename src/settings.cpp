@@ -74,7 +74,7 @@ void saveSettings(const Settings& settings) {
     file << "keyProfile=" << settings.keyProfile << "\n";
 
     // Remappable keys ("custom" profile), written with every save so the
-    // section documents itself: change a value, restart Tinta
+    // section documents itself: change a value, restart Scher
     file << "frontmatterShown=" << settings.frontmatter.shown << "\n";
     file << "frontmatterOther=" << settings.frontmatter.showOther << "\n";
     for (const auto& rule : settings.frontmatter.rules)
@@ -601,7 +601,7 @@ bool registerFileAssociation() {
     result = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\Tinta.MarkdownFile", 0, nullptr,
                               REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr);
     if (result != ERROR_SUCCESS) return false;
-    const wchar_t* desc = L"Tinta Document";
+    const wchar_t* desc = L"Scher Document";
     RegSetValueExW(hKey, nullptr, 0, REG_SZ, (BYTE*)desc, (DWORD)((wcslen(desc) + 1) * sizeof(wchar_t)));
     RegCloseKey(hKey);
 
@@ -628,7 +628,7 @@ bool registerFileAssociation() {
     result = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Tinta\\Capabilities", 0, nullptr,
                               REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr);
     if (result != ERROR_SUCCESS) return false;
-    const wchar_t* appName = L"Tinta";
+    const wchar_t* appName = L"Scher";
     const wchar_t* appDesc = L"A fast, lightweight Markdown and Mermaid reader";
     RegSetValueExW(hKey, L"ApplicationName", 0, REG_SZ, (BYTE*)appName, (DWORD)((wcslen(appName) + 1) * sizeof(wchar_t)));
     RegSetValueExW(hKey, L"ApplicationDescription", 0, REG_SZ, (BYTE*)appDesc, (DWORD)((wcslen(appDesc) + 1) * sizeof(wchar_t)));
@@ -654,7 +654,7 @@ bool registerFileAssociation() {
                               REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr);
     if (result != ERROR_SUCCESS) return false;
     const wchar_t* capPath = L"Software\\Tinta\\Capabilities";
-    RegSetValueExW(hKey, L"Tinta", 0, REG_SZ, (BYTE*)capPath, (DWORD)((wcslen(capPath) + 1) * sizeof(wchar_t)));
+    RegSetValueExW(hKey, L"Scher", 0, REG_SZ, (BYTE*)capPath, (DWORD)((wcslen(capPath) + 1) * sizeof(wchar_t)));
     RegCloseKey(hKey);
 
     for (std::wstring_view extension : DOCUMENT_FILE_EXTENSIONS) {
@@ -686,7 +686,7 @@ void askAndRegisterFileAssociation(Settings& settings) {
         // Store installs: the package manifest already registers the file
         // types, so only the "make default" choice is missing. Ask once per
         // install (settings.ini lives in the package's private AppData, so
-        // it resets on uninstall) and deep-link straight to Tinta's page in
+        // it resets on uninstall) and deep-link straight to Scher's page in
         // Settings > Default apps. Windows 10 ignores the query part and
         // opens the general Default Apps page instead.
         if (settings.hasAskedFileAssociation) return;
@@ -697,7 +697,7 @@ void askAndRegisterFileAssociation(Settings& settings) {
             MB_YESNO | MB_ICONQUESTION);
         if (result == IDYES) {
             ShellExecuteW(nullptr, L"open",
-                L"ms-settings:defaultapps?registeredAppUser=Tinta%20Markdown%20Viewer",
+                L"ms-settings:defaultapps?registeredAppUser=Scher%20Markdown%20Viewer",
                 nullptr, nullptr, SW_SHOWNORMAL);
         }
         settings.hasAskedFileAssociation = true;

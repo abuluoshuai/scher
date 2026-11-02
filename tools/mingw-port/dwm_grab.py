@@ -19,7 +19,7 @@ gdi32 = ctypes.windll.gdi32
 dwmapi = ctypes.windll.dwmapi
 
 user32.SetProcessDPIAware()
-PROC = "tinta.exe"
+PROC = "scher.exe"
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                    "tinta-window.png")
 

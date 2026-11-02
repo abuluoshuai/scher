@@ -15,7 +15,7 @@ highlighttext=102030
 ```
 
 Each missing `h1`-`h6` key inherits `heading`. Highlight colours are optional:
-without them, Tinta keeps its light/dark translucent yellow background and the
+without them, Scher keeps its light/dark translucent yellow background and the
 inherited text colour. Explicit colours use opaque RRGGBB hex. Nested links and
 inline code retain their own text styles.
 
@@ -26,7 +26,7 @@ and expand the six-level palette. **Highlight** changes the marked background;
 both explicit values and inheritance.
 
 Native viewing and HTML/DOCX exports honour these overrides. Word uses arbitrary
-colour shading for custom highlights. Native printing retains Tinta's established
+colour shading for custom highlights. Native printing retains Scher's established
 light print palette. Existing themes look the same unless overrides are added.
 
 Try `tests/fixtures/theme-colours.md` with `tests/fixtures/theme-colours.ini`.

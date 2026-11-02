@@ -92,17 +92,17 @@ const App::TextRect* findTextRectAt(const App& app, int x, int y) {
 
 
 void updateWindowTitle(App& app) {
-    std::wstring title = L"Tinta";
+    std::wstring title = L"Scher";
     if (!app.currentFile.empty()) {
         std::wstring wpath = toWide(app.currentFile);
         size_t lastSep = wpath.find_last_of(L"\\/");
         if (lastSep != std::wstring::npos)
-            title = L"Tinta - " + wpath.substr(lastSep + 1);
+            title = L"Scher - " + wpath.substr(lastSep + 1);
         else
-            title = L"Tinta - " + wpath;
+            title = L"Scher - " + wpath;
     } else if (app.editMode) {
         // Quick note (Ctrl+N): no backing file until the first save
-        title = L"Tinta - ";
+        title = L"Scher - ";
         title += tr(app, "title.untitled");
     }
     SetWindowTextW(app.hwnd, title.c_str());

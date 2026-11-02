@@ -30,7 +30,7 @@ user32 = ctypes.windll.user32
 user32.SetProcessDPIAware()
 
 BUILD = r"E:\WorkBuddy\翠花工具包\Markdown阅读器\build"
-EXE = os.path.join(BUILD, "tinta.exe")
+EXE = os.path.join(BUILD, "scher.exe")
 INI = os.path.join(BUILD, "settings.ini")
 DOCS = os.path.join(os.environ.get("TEMP", r"C:\Windows\Temp"),
                     "tinta-progress", "docs")
@@ -49,18 +49,18 @@ def doc(name):
 
 
 def procs():
-    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq tinta.exe",
+    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq scher.exe",
                           "/FO", "CSV", "/NH"],
                          capture_output=True, text=True,
                          errors="replace").stdout
-    return [l for l in out.splitlines() if l.lower().startswith('"tinta.exe"')]
+    return [l for l in out.splitlines() if l.lower().startswith('"scher.exe"')]
 
 
 def kill_all():
     for _ in range(20):
         if not procs():
             break
-        subprocess.run(["taskkill", "/IM", "tinta.exe", "/F"],
+        subprocess.run(["taskkill", "/IM", "scher.exe", "/F"],
                        capture_output=True)
         time.sleep(0.3)
 

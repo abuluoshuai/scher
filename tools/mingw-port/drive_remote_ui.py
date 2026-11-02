@@ -19,7 +19,7 @@ user32.SetProcessDPIAware()
 
 ROOT = r"E:\WorkBuddy\翠花工具包\Markdown阅读器"
 BUILD = os.path.join(ROOT, "build")
-EXE = os.path.join(BUILD, "tinta.exe")
+EXE = os.path.join(BUILD, "scher.exe")
 INI = os.path.join(BUILD, "settings.ini")
 TMP = os.environ["TEMP"]
 FAKE_ROOT = os.path.join(TMP, "fake-remote")
@@ -40,17 +40,17 @@ def check(ok, what, extra=""):
 
 
 def procs():
-    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq tinta.exe",
+    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq scher.exe",
                           "/FO", "CSV", "/NH"],
                          capture_output=True, text=True, errors="replace").stdout
-    return [l for l in out.splitlines() if l.lower().startswith('"tinta.exe"')]
+    return [l for l in out.splitlines() if l.lower().startswith('"scher.exe"')]
 
 
 def kill_all():
     for _ in range(25):
         if not procs():
             return
-        subprocess.run(["taskkill", "/IM", "tinta.exe", "/F"], capture_output=True)
+        subprocess.run(["taskkill", "/IM", "scher.exe", "/F"], capture_output=True)
         time.sleep(0.3)
 
 
@@ -126,7 +126,7 @@ def main():
     click(hwnd, 120, 121)          # third entry
     time.sleep(1.2)
     t1 = title(hwnd)
-    check("Tinta" in t1, "remote browser did not disturb the title", t1)
+    check("Scher" in t1, "remote browser did not disturb the title", t1)
 
     # 2. Browser listing: dirs first, then two files
     click(hwnd, 400, 236)          # row 1 = 笔记 一.md
@@ -134,7 +134,7 @@ def main():
     click(hwnd, 1000, 704)         # Open
     time.sleep(1.8)
     t2 = title(hwnd)
-    check(t2 != t0 and "Tinta - " in t2, "multi-select opened a remote tab", t2)
+    check(t2 != t0 and "Scher - " in t2, "multi-select opened a remote tab", t2)
 
     stored = io.open(INI, encoding="utf-8", errors="replace").read()
     remotes = [l for l in stored.splitlines() if l.startswith("remoteRecent=")]
@@ -149,7 +149,7 @@ def main():
     click(hwnd, 700, 144)          # first remote row in the menu
     time.sleep(1.0)
     t3 = title(hwnd)
-    check("Tinta - " in t3, "history menu opened a recent remote document", t3)
+    check("Scher - " in t3, "history menu opened a recent remote document", t3)
 
     # 4. "More" dialog and a row inside it
     click(hwnd, btn_x, 20)
@@ -159,7 +159,7 @@ def main():
     click(hwnd, 700, 164)          # first row of the remote column
     time.sleep(1.0)
     t4 = title(hwnd)
-    check("Tinta - " in t4, "history dialog opened a remote document", t4)
+    check("Scher - " in t4, "history dialog opened a remote document", t4)
 
     # 5. Read-only: Ctrl+E must not switch into the editor
     user32.PostMessageW(hwnd, 0x0100, 0x11, 0)      # Ctrl down
@@ -168,7 +168,7 @@ def main():
     user32.PostMessageW(hwnd, 0x0101, 0x11, 0)
     time.sleep(0.8)
     t5 = title(hwnd)
-    check(not t5.startswith("Tinta - *") and t5 == t4,
+    check(not t5.startswith("Scher - *") and t5 == t4,
           "Ctrl+E stayed read-only", t5)
 
     user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)

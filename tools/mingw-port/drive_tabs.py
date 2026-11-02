@@ -36,12 +36,12 @@ PROBE = r"C:\temp_tinta_probe.txt"
 
 def hwnd_of():
     out = subprocess.run(
-        ["tasklist", "/FI", "IMAGENAME eq tinta.exe", "/FO", "CSV", "/NH"],
+        ["tasklist", "/FI", "IMAGENAME eq scher.exe", "/FO", "CSV", "/NH"],
         capture_output=True, text=True, errors="replace").stdout
     pids = set()
     for line in out.splitlines():
         cells = [c.strip('"') for c in line.split('","')]
-        if len(cells) > 1 and cells[0].lower() == "tinta.exe" and cells[1].isdigit():
+        if len(cells) > 1 and cells[0].lower() == "scher.exe" and cells[1].isdigit():
             pids.add(int(cells[1]))
     found = []
     @ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)

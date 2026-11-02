@@ -103,7 +103,7 @@ void tabsInit(App& app) {
     tab.path = app.currentFile;
     tab.title = titleForPath(app, app.currentFile);
     // A pathless viewer tab is the start page, not an untitled note
-    if (app.currentFile.empty() && !app.editMode) tab.title = L"Tinta";
+    if (app.currentFile.empty() && !app.editMode) tab.title = L"Scher";
     if (!app.currentFile.empty())
         tab.readProgress = findReadProgress(loadSettings(), app.currentFile);
     app.tabs.push_back(std::move(tab));
@@ -304,7 +304,7 @@ void tabBecomeStartPage(App& app, HWND hwnd) {
     App::DocTab& tab = app.tabs[app.activeTab];
     draftsDeleteForTab(app, tab.id);
     tab.path.clear();
-    tab.title = L"Tinta";
+    tab.title = L"Scher";
     tab.editMode = false;
     tab.editorDirty = false;
     tab.editorText.clear();
@@ -1106,7 +1106,7 @@ void renderTabStrip(App& app) {
     if (tabless) {
         // Single document: the caption shows the plain window title, with
         // the + button right after it so the tab row is discoverable
-        std::wstring title = L"Tinta";
+        std::wstring title = L"Scher";
         if (!app.tabs.empty() && !app.tabs[0].title.empty() &&
             !startPageActive(app)) {
             title = app.tabs[0].title;

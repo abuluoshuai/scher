@@ -15,7 +15,7 @@ import zipfile
 
 repo = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--binary', type=Path, default=repo/'build/Release/tinta.exe')
+parser.add_argument('--binary', type=Path, default=repo/'build/Release/scher.exe')
 parser.add_argument('--output', type=Path, default=repo/'out/discussion-225/exports')
 args = parser.parse_args()
 output = args.output.resolve()
@@ -29,7 +29,7 @@ results = []
 for theme, index in [('paper', 0), ('midnight', 5)]:
     folder = output/theme
     folder.mkdir(parents=True, exist_ok=True)
-    exe = folder/'tinta.exe'
+    exe = folder/'scher.exe'
     shutil.copy2(args.binary, exe)
     (folder/'settings.ini').write_text(f'[Settings]\nthemeIndex={index}\nfollowSystemTheme=0\n'
         'hasAskedFileAssociation=1\nlanguage=en\n', encoding='utf-8')

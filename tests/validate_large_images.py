@@ -28,7 +28,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--binary', type=Path, default=REPO / 'build/Release/tinta.exe')
+    parser.add_argument('--binary', type=Path, default=REPO / 'build/Release/scher.exe')
     parser.add_argument('--input-tests', type=Path, default=REPO / 'build/Release/input_tests.exe')
     parser.add_argument('--output', type=Path, default=REPO / 'out/issue-220/fixed')
     args = parser.parse_args()
@@ -57,7 +57,7 @@ def main():
 
     runner = output / 'runner'
     runner.mkdir(exist_ok=True)
-    executable = runner / 'tinta.exe'
+    executable = runner / 'scher.exe'
     shutil.copy2(args.binary.resolve(), executable)
     (runner / 'settings.ini').write_text(
         '[Settings]\nthemeIndex=0\nfollowSystemTheme=0\n'

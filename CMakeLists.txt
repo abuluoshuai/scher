@@ -148,7 +148,7 @@ set(HEADERS
 
 # Windows resource file (icon)
 set(RESOURCES
-    resources/tinta.rc
+    resources/scher.rc
 )
 
 # Main executable (target keeps the upstream name so sources need no churn;

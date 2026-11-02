@@ -1,4 +1,4 @@
-// Start page (design t7): the quiet launcher an empty Tinta shows
+// Start page (design t7): the quiet launcher an empty Scher shows
 // instead of the tutorial sample document. Recents are the hero, the
 // sample document and tutorials become three Learn cards, the whole
 // window stays a drop target, and everything on the page carries its
@@ -22,15 +22,15 @@
 
 // The old bare-launch tutorial, now behind the "Sample document" card
 // (and still the fallback when a requested file cannot be loaded)
-static const char* kSampleDocument = R"(# Welcome to Tinta
+static const char* kSampleDocument = R"(# Welcome to Scher
 
-**Tinta** is a fast, lightweight Markdown and Mermaid viewer for Windows.
+**Scher** is a fast, lightweight Markdown and Mermaid viewer for Windows.
 
 ## Getting Started
 
 - **Drag & drop** a `.md` or `.mmd` file onto this window
 - Press **B** to browse and open files from a folder
-- Or run `tinta.exe readme.md` from the command line
+- Or run `scher.exe readme.md` from the command line
 - Press **?** for all available keyboard shortcuts
 
 ## Features
@@ -89,7 +89,7 @@ Press **?** at any time to see all shortcuts.
 
 static const char* kMermaidTour = R"(# Mermaid diagrams
 
-Tinta renders **22 diagram families natively** from plain text. A diagram
+Scher renders **22 diagram families natively** from plain text. A diagram
 is just a fenced code block with the `mermaid` language tag — edit the
 text, save, and the picture follows.
 
@@ -108,11 +108,11 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant You
-    participant Tinta
-    You->>Tinta: Save the file
-    Tinta-->>You: Re-renders instantly
-    You->>Tinta: Press {{EDIT_KEY_PLAIN}} to edit
-    Tinta-->>You: Live preview beside the text
+    participant Scher
+    You->>Scher: Save the file
+    Scher-->>You: Re-renders instantly
+    You->>Scher: Press {{EDIT_KEY_PLAIN}} to edit
+    Scher-->>You: Live preview beside the text
 ```
 
 ## Pie
@@ -146,7 +146,7 @@ as a diagram — no fences needed.
 
 static const char* kMarkdownBasics = R"(# Markdown basics
 
-Everything Tinta renders, in two minutes. Press **{{EDIT_KEY}}** to edit an
+Everything Scher renders, in two minutes. Press **{{EDIT_KEY}}** to edit an
 untitled copy and watch the preview follow your keystrokes. Save it with
 **Ctrl+S** to a file of your own; the built-in example stays unchanged.
 
@@ -497,7 +497,7 @@ void renderStartPage(App& app) {
     };
 
     // --- Hero: icon, wordmark, version, tagline
-    IDWriteTextLayout* wm = spLayout(app, L"Tinta", 38.0f,
+    IDWriteTextLayout* wm = spLayout(app, L"Scher", 38.0f,
                                      DWRITE_FONT_WEIGHT_EXTRA_BOLD, 4096.0f,
                                      false, false, -1.0f);
     DWRITE_TEXT_METRICS wmM = spMetrics(wm);

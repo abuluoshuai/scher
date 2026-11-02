@@ -1,6 +1,6 @@
 # Footnotes
 
-Tinta supports named and numbered Markdown footnotes:
+Scher supports named and numbered Markdown footnotes:
 
 ```markdown
 A reference[^note], and the same reference again[^note].

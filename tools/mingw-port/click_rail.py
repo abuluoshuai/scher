@@ -12,11 +12,11 @@ PROBE = r"C:/Users/sch/AppData/Local/Temp/temp_tinta_probe.txt"
 
 def tinta_pid():
     out = subprocess.run(
-        ["tasklist", "/FI", "IMAGENAME eq tinta.exe", "/FO", "CSV", "/NH"],
+        ["tasklist", "/FI", "IMAGENAME eq scher.exe", "/FO", "CSV", "/NH"],
         capture_output=True, text=True, errors="replace").stdout
     for line in out.splitlines():
         c = [x.strip('"') for x in line.split('","')]
-        if len(c) > 1 and c[0].lower() == "tinta.exe" and c[1].isdigit():
+        if len(c) > 1 and c[0].lower() == "scher.exe" and c[1].isdigit():
             return int(c[1])
     return None
 

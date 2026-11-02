@@ -16,7 +16,7 @@ from PIL import ImageGrab
 user32 = ctypes.windll.user32
 user32.SetProcessDPIAware()
 
-PROC_NAME = "tinta.exe"
+PROC_NAME = "scher.exe"
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tinta-window.png")
 
 
@@ -62,7 +62,7 @@ def title_of(hwnd):
 def main():
     pids = tinta_pids()
     if not pids:
-        print("tinta.exe is not running")
+        print("scher.exe is not running")
         return 1
 
     wins = windows_of(pids)

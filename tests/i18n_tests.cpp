@@ -88,7 +88,7 @@ int main() {
           "Korean discard confirmation");
 
     // Keys left out of the built-in table fall back to English
-    check(std::wstring(tr(de, "title.no_file")) == L"Tinta",
+    check(std::wstring(tr(de, "title.no_file")) == L"Scher",
           "untranslated key falls back to English");
 
     // Quick-note strings (Ctrl+N) ship translated too

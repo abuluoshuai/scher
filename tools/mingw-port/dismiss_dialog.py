@@ -13,7 +13,7 @@ import sys
 user32 = ctypes.windll.user32
 user32.SetProcessDPIAware()
 
-PROC_NAME = "tinta.exe"
+PROC_NAME = "scher.exe"
 NO_LABELS = ("\u5426", "No", "\u4e0d")
 YES_LABELS = ("\u662f", "Yes")
 
@@ -68,12 +68,12 @@ def children(hwnd):
 def main():
     pids = tinta_pids()
     if not pids:
-        print("tinta.exe is not running")
+        print("scher.exe is not running")
         return 1
 
     target = None
     for hwnd in top_windows(pids):
-        if text_of(hwnd).startswith("Tinta - ") and text_of(hwnd) not in ("Tinta",):
+        if text_of(hwnd).startswith("Scher - ") and text_of(hwnd) not in ("Scher",):
             target = hwnd
     if target is None:
         print("no association dialog found")

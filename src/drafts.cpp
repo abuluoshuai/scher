@@ -92,7 +92,7 @@ static bool isLiveTintaProcess(DWORD pid) {
         std::wstring base =
             slash == std::wstring::npos ? path : path.substr(slash + 1);
         for (wchar_t& c : base) c = (wchar_t)towlower(c);
-        live = (base == L"tinta.exe");
+        live = (base == L"scher.exe");  // was tinta.exe before the rename
     }
     CloseHandle(proc);
     return live;
