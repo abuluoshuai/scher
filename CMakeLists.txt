@@ -35,15 +35,28 @@ if(MINGW)
     add_compile_definitions(NTDDI_VERSION=0x0A000003 _WIN32_WINNT=0x0A00 WINVER=0x0A00)
 endif()
 
-# MD4C markdown parser
+# MD4C markdown parser. Prefer the vendored copy in third_party/md4c (same
+# release-0.5.2); only fetch from the network when the directory is absent.
 include(FetchContent)
-FetchContent_Declare(
-    md4c
-    GIT_REPOSITORY https://github.com/mity/md4c.git
-    GIT_TAG 729e6b8b320caa96328968ab27d7db2235e4fb47  # release-0.5.2, pinned by commit
-    GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(md4c)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/md4c/src/md4c.c AND
+   EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/md4c/CMakeLists.txt)
+    set(md4c_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/md4c)
+    # BUILD_MD2HTML_EXECUTABLE=OFF: the demo CLI is upstream-only, we only
+    # need the parser library
+    set(BUILD_MD2HTML_EXECUTABLE OFF CACHE BOOL "" FORCE)
+    add_subdirectory(third_party/md4c md4c-build)
+else()
+    message(STATUS "third_party/md4c not found - fetching md4c release-0.5.2")
+    FetchContent_Declare(
+        md4c
+        GIT_REPOSITORY https://github.com/mity/md4c.git
+        GIT_TAG 729e6b8b320caa96328968ab27d7db2235e4fb47  # release-0.5.2, pinned by commit
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(md4c)
+    # Keep the include path uniform for both paths
+    set(md4c_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/md4c)
+endif()
 
 # Source files
 set(SOURCES
