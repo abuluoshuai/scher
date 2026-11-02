@@ -681,13 +681,16 @@ D2D1_COLOR_F stripBackground(const App& app) {
 }
 
 // Rounded-top tab body: rounded rect extended past the strip bottom, the
-// caller clips to the strip so the bottom corners stay square
+// caller clips to the strip so the bottom corners stay square. The vertical
+// rail passes extend=false: its rows sit flush against each other, so the
+// tail would spill onto the row below.
 void fillTabBody(App& app, const D2D1_RECT_F& r, float radius,
-                 const D2D1_COLOR_F& color) {
+                 const D2D1_COLOR_F& color, bool extend = true) {
     app.brush->SetColor(color);
     app.renderTarget->FillRoundedRectangle(
         D2D1::RoundedRect(
-            D2D1::RectF(r.left, r.top, r.right, r.bottom + radius * 2.0f),
+            D2D1::RectF(r.left, r.top, r.right,
+                        r.bottom + (extend ? radius * 2.0f : 0.0f)),
             radius, radius),
         app.brush);
 }
@@ -904,9 +907,9 @@ void renderTabStrip(App& app) {
                                 D2D1::RectF(r.left - spread,
                                             r.top - spread * 0.6f,
                                             r.right + spread, r.bottom),
-                                radius + spread * 0.5f, shadow);
+                                radius + spread * 0.5f, shadow, false);
                 }
-                fillTabBody(app, r, radius, app.theme.background);
+                fillTabBody(app, r, radius, app.theme.background, false);
                 app.brush->SetColor(app.theme.accent);
                 app.renderTarget->FillRoundedRectangle(
                     D2D1::RoundedRect(
@@ -916,7 +919,7 @@ void renderTabStrip(App& app) {
                         dpi(app, 1.5f), dpi(app, 1.5f)),
                     app.brush);
             } else if (hovered) {
-                fillTabBody(app, r, radius, faint);
+                fillTabBody(app, r, radius, faint, false);
             }
 
             bool dirty = active ? (app.editMode && app.editorDirty)
