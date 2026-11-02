@@ -103,6 +103,37 @@ int runTabHoverCardTests() {
     tabsSeedSession(app, paths);
     check(app.tabs.size() == 4 && app.activeTab == 0, "four fixture tabs, the first active");
 
+    // A remote tab wears the "ssh" tag ahead of its label, so its text
+    // starts further right than a local tab's does. Structural check: the
+    // badge reserves width, and local tabs are unaffected.
+    {
+        app.width = 1050;
+        app.height = 900;
+        app.contentScale = 1.0f;
+        updateTextFormats(app);
+        tabHoverCardLeave(app, app.hwnd);
+        paint(app);
+        const App::TabHit* localHit = hitFor(app, 0);
+        const float localLeft = localHit ? localHit->labelRect.left : -1.0f;
+        check(localLeft > 0.0f, "the local tab exposes a label rect");
+
+        App::DocTab remote;
+        remote.id = 901;
+        remote.path = "ssh://testbox/notes.md";
+        remote.title = L"README.md";      // same name as tab 0: width parity
+        app.tabs.push_back(remote);
+        paint(app);
+        const int remoteIndex = (int)app.tabs.size() - 1;
+        const App::TabHit* remoteHit = hitFor(app, remoteIndex);
+        check(remoteHit != nullptr, "the remote tab is on the strip");
+        if (remoteHit && localLeft > 0.0f) {
+            check(remoteHit->labelRect.left > localLeft + dpi(app, 16.0f),
+                  "the ssh badge pushes the remote label right");
+        }
+        app.tabs.pop_back();
+        paint(app);
+    }
+
     // The card's text: whole name, folder, nothing to explain yet
     const std::wstring folders[] = {dir.wstring(), (dir / L"notes").wstring(),
                                     dir.wstring(), dir.wstring()};

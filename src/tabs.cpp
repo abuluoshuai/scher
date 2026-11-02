@@ -799,6 +799,44 @@ void drawProgressRing(App& app, float cx, float cy, float radius,
     geo->Release();
 }
 
+// Tiny "ssh" wordmark in front of a remote document's tab label: marks the
+// tab as a read-only remote file at a glance. The color follows the theme
+// (accent with the theme text's strength), so it stays legible on every
+// one of the ten themes and both placements. Returns the badge width so
+// the caller can shift the label.
+float drawSshBadge(App& app, float left, float centerY,
+                   const D2D1_COLOR_F& baseColor) {
+    const float badgeH = dpi(app, 12.0f);
+    const float fontSize = dpi(app, 9.0f);
+    const float padX = dpi(app, 4.0f);
+    const wchar_t* label = L"ssh";
+    float textW = measureText(app, label, app.folderBrowserFormat);
+    if (textW <= 0.0f) return 0.0f;
+    float badgeW = textW + padX * 2.0f;
+
+    // Rounded pill behind the text, tinted from the theme text color so it
+    // reads as a quiet tag rather than a hard accent block
+    D2D1_COLOR_F pill = baseColor;
+    pill.a = 0.14f;
+    app.brush->SetColor(pill);
+    app.renderTarget->FillRoundedRectangle(
+        D2D1::RoundedRect(
+            D2D1::RectF(left, centerY - badgeH * 0.5f, left + badgeW,
+                        centerY + badgeH * 0.5f),
+            dpi(app, 3.0f), dpi(app, 3.0f)),
+        app.brush);
+
+    D2D1_COLOR_F textColor = baseColor;
+    textColor.a = 0.85f;
+    app.brush->SetColor(textColor);
+    app.renderTarget->DrawText(
+        label, (UINT32)wcslen(label), app.folderBrowserFormat,
+        D2D1::RectF(left + padX, centerY - badgeH * 0.5f,
+                    left + badgeW, centerY + badgeH * 0.5f),
+        app.brush);
+    return badgeW;
+}
+
 // Feeds the active tab's progress from the scroll position, mirroring the
 // app's own scroll clamp (viewport height = window height). Both directions:
 // scrolling back up lowers the ring again. Re-evaluates when the scroll
@@ -934,11 +972,19 @@ void renderTabStrip(App& app) {
 
             // Reading-progress ring at the text head, then the file name:
             // horizontal text, rail width minus the ring and the
-            // close/dot reserve, ellipsis-trimmed by DirectWrite
+            // close/dot reserve, ellipsis-trimmed by DirectWrite.
+            // Remote tabs wear a small "ssh" tag before the label.
+            bool tabRemote = remotePathIs(app.tabs[i].path);
             float reserve = showClose ? dpi(app, 34.0f) : dpi(app, 16.0f);
             float labelLeft = r.left + v.padX;
+            if (tabRemote) {
+                labelLeft += drawSshBadge(app, labelLeft,
+                                          (r.top + r.bottom) * 0.5f,
+                                          text) +
+                             dpi(app, 4.0f);
+            }
             if (!app.tabs[i].path.empty()) {
-                drawProgressRing(app, r.left + v.padX + dpi(app, 8.0f),
+                drawProgressRing(app, labelLeft + dpi(app, 8.0f),
                                  r.top + (r.bottom - r.top) * 0.5f,
                                  dpi(app, 7.0f),
                                  app.tabs[i].readProgress);
@@ -1117,6 +1163,12 @@ void renderTabStrip(App& app) {
         // The right-click target starts at the icon edge so the ring does
         // not eat into it
         float hitLeft = textLeft;
+        // A lone remote document wears the "ssh" tag ahead of its ring
+        if (!app.tabs.empty() && !app.tabs[0].path.empty() &&
+            remotePathIs(app.tabs[0].path)) {
+            textLeft += drawSshBadge(app, textLeft, stripH * 0.5f, text) +
+                        dpi(app, 4.0f);
+        }
         // The lone document wears its progress ring ahead of the title
         if (!app.currentFile.empty() && !startPageActive(app) &&
             !app.tabs.empty()) {
@@ -1241,10 +1293,17 @@ void renderTabStrip(App& app) {
                       : D2D1::ColorF(0.74f, 0.36f, 0.34f);
 
             // Progress ring ahead of the label when the tab is wide
-            // enough; the label keeps its ellipsis trim either way
+            // enough; the label keeps its ellipsis trim either way.
+            // Remote tabs wear a small "ssh" tag before the label.
+            bool isRemote = remotePathIs(app.tabs[i].path);
             bool showRing =
                 !app.tabs[i].path.empty() && m.tabWidth >= dpi(app, 76.0f);
             float labelLeft = r.left + dpi(app, 12.0f);
+            if (isRemote && m.tabWidth >= dpi(app, 90.0f)) {
+                labelLeft += drawSshBadge(app, labelLeft,
+                                          (top + stripH) * 0.5f, text) +
+                             dpi(app, 4.0f);
+            }
             if (showRing) {
                 drawProgressRing(app, r.left + dpi(app, 20.0f),
                                  (top + stripH) * 0.5f, dpi(app, 7.0f),
