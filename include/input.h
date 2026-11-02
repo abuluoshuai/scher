@@ -4,6 +4,11 @@
 #include "app.h"
 #include <windows.h>
 
+// WM_MOUSEWHEEL reports SCREEN coordinates while every wheel handler works in
+// client space like the rest of the pointer messages. This converts the
+// message's point once, at the dispatcher, and is testable on its own.
+POINT wheelClientPoint(HWND hwnd, LPARAM lParam);
+
 void handleMouseWheel(App& app, HWND hwnd, WPARAM wParam, LPARAM lParam);
 void handleMouseHWheel(App& app, HWND hwnd, WPARAM wParam, LPARAM lParam);
 void handleMouseMove(App& app, HWND hwnd, LPARAM lParam);

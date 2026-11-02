@@ -828,6 +828,12 @@ static void settingsAction(App& app, HWND hwnd, int action) {
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
+POINT wheelClientPoint(HWND hwnd, LPARAM lParam) {
+    POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+    if (hwnd) ScreenToClient(hwnd, &pt);
+    return pt;
+}
+
 void handleMouseWheel(App& app, HWND hwnd, WPARAM wParam, LPARAM lParam) {
     tabHoverCardDismiss(app, hwnd);
     // Remote and history overlays own the wheel while they are up

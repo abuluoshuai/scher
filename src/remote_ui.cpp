@@ -717,7 +717,10 @@ bool remoteBrowserMouseDown(App& app, HWND hwnd, float x, float y) {
 bool remoteBrowserWheel(App& app, float delta, float x, float y) {
     if (!app.showRemoteBrowser) return false;
     D2D1_RECT_F panel = remoteBrowserPanel(app);
-    if (!pointIn(panel, x, y)) { app.showRemoteBrowser = false; return true; }
+    // A wheel outside the panel leaves the browser up: it is a persistent
+    // overlay, and dismissing it on a stray scroll made the list vanish
+    // the moment the pointer drifted off it.
+    if (!pointIn(panel, x, y)) return false;
     float rowH = rbRowHeight(app);
     const D2D1_RECT_F& list = app.remoteListRect;
     float viewH = std::max(rowH, list.bottom - list.top);

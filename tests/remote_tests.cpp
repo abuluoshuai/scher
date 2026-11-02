@@ -4,6 +4,9 @@
 
 #include "fixture_path.h"
 #include "remote.h"
+#include "input.h"
+
+#include <windowsx.h>
 #include "settings.h"
 
 #include <cstdio>
@@ -145,6 +148,72 @@ void settingsRoundTrip() {
     check(settings.readingPositions.size() == 50, "the position list stays capped");
 }
 
+// The browser is a persistent overlay: the wheel scrolls its list and never
+// dismisses it (a stray scroll used to close it outright).
+void browserWheel() {
+    App app;
+    app.hwnd = nullptr;              // InvalidateRect(nullptr, ...) is harmless
+    app.width = 1200;
+    app.height = 820;
+    app.contentScale = 1.0f;
+    app.showRemoteBrowser = true;
+    app.remoteHost = "wsl";
+    app.remoteDir = "/home/sch";
+    app.remoteRows.clear();
+    for (int i = 0; i < 40; i++) {
+        App::RemoteRow row;
+        row.name = L"file" + std::to_wstring(i) + L".md";
+        app.remoteRows.push_back(row);
+    }
+    // The list rect is normally published by the render pass
+    app.remoteListRect = D2D1::RectF(60.0f, 150.0f, 1140.0f, 600.0f);
+    app.remoteScroll = 0.0f;
+
+    const LPARAM inside = MAKELPARAM(600, 300);
+    handleMouseWheel(app, app.hwnd, MAKEWPARAM(0, (WORD)-WHEEL_DELTA), inside);
+    check(app.showRemoteBrowser, "wheeling inside the browser keeps it open");
+    check(app.remoteScroll > 0.0f,
+          "wheeling inside the browser scrolls its list");
+
+    const float scrolled = app.remoteScroll;
+    const LPARAM outside = MAKELPARAM(10, 780);
+    handleMouseWheel(app, app.hwnd, MAKEWPARAM(0, (WORD)-WHEEL_DELTA), outside);
+    check(app.showRemoteBrowser,
+          "a wheel outside the browser leaves the overlay up");
+    check(app.remoteScroll == scrolled,
+          "a wheel outside the browser does not move its list");
+}
+
+// The dispatcher feeds the wheel handlers client coordinates even though
+// WM_MOUSEWHEEL carries screen ones. Without that conversion every point
+// tested against a panel lands outside it - which is what made the remote
+// browser dismiss itself on scroll.
+void wheelCoordinates() {
+    WNDCLASSW wc{};
+    wc.lpfnWndProc = DefWindowProcW;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.lpszClassName = L"ScherWheelPointTest";
+    RegisterClassW(&wc);
+    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"wheel point test",
+                                WS_POPUP, -1200, 100, 800, 600, nullptr,
+                                nullptr, wc.hInstance, nullptr);
+    check(hwnd != nullptr, "a window for the wheel point test");
+    if (hwnd) {
+        POINT client{600, 300};
+        POINT screen = client;
+        ClientToScreen(hwnd, &screen);
+        const LPARAM msg = MAKELPARAM(screen.x, screen.y);
+        const POINT back = wheelClientPoint(hwnd, msg);
+        check(back.x == client.x && back.y == client.y,
+              "a screen wheel point converts back to client space");
+        // The raw message point is the screen one: proof the conversion is
+        // what fixes panel hit testing, not a coincidence.
+        check(GET_X_LPARAM(msg) == screen.x,
+              "the message carries screen coordinates before conversion");
+        DestroyWindow(hwnd);
+    }
+}
+
 }  // namespace
 
 // The SSH exchange itself, against a test double: remote_process_tests.cpp
@@ -155,6 +224,8 @@ int main() {
     configParsing();
     contentCache();
     settingsRoundTrip();
+    browserWheel();
+    wheelCoordinates();
     failures += runRemoteProcessSuite();
     if (failures) {
         std::cerr << "remote tests failed: " << failures << '\n';

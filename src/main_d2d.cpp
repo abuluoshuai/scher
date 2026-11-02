@@ -1417,9 +1417,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
 
-        case WM_MOUSEWHEEL:
-            if (app) handleMouseWheel(*app, hwnd, wParam, lParam);
+        case WM_MOUSEWHEEL: {
+            // WM_MOUSEWHEEL carries SCREEN coordinates while every wheel
+            // handler works in client space like the other pointer messages.
+            // Passing the raw lParam made points fall outside their panels:
+            // the remote browser dismissed itself on any wheel and its list
+            // never scrolled. Convert once, here.
+            const POINT pt = wheelClientPoint(hwnd, lParam);
+            if (app)
+                handleMouseWheel(*app, hwnd, wParam,
+                                 MAKELPARAM(pt.x, pt.y));
             return 0;
+        }
 
         case WM_MOUSEHWHEEL:
             if (app) handleMouseHWheel(*app, hwnd, wParam, lParam);
@@ -1959,7 +1968,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     // Windows will not delete or rename a folder that a running process
     // works in (#253)
     auto resolveArgument = [](const std::wstring& path) {
-        std::wstring full = path.empty() ? std::wstring() : absoluteFilePath(toUtf8(path));
+        if (path.empty()) return std::wstring();
+        // ssh:// URIs are addressed by the remote side, not by this file
+        // system: making them absolute would rewrite the scheme into a
+        // Windows path and lose the remote document.
+        if (remotePathIs(toUtf8(path))) return path;
+        std::wstring full = absoluteFilePath(toUtf8(path));
         return full.empty() ? path : full;
     };
     inputFile = toUtf8(resolveArgument(toWide(inputFile)));
@@ -2191,10 +2205,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         // Untitled quick note: an empty document, no backing file
         loadDocumentContent(std::string(), {});
     } else if (!inputFile.empty()) {
-        if (loadFile(inputFile)) {
+        // An ssh:// argument opens a remote document - the placeholder shows
+        // at once and the fetch fills it in, exactly like session restore.
+        const bool remoteInput = remotePathIs(inputFile);
+        const bool opened = remoteInput ? openRemoteDocumentInViewer(app, inputFile)
+                                        : loadFile(inputFile);
+        if (opened) {
             app.currentFile = inputFile;
-            app.focusMermaidOnNextLayout = isMermaidDocumentPath(inputFile);
-            persistRecentFile(app.currentFile);
+            app.focusMermaidOnNextLayout = isMermaidDocumentPath(toWide(inputFile));
+            if (remoteInput)
+                persistRemoteFile(app.currentFile);
+            else
+                persistRecentFile(app.currentFile);
         } else {
             showStartPage();
         }

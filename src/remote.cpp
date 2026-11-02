@@ -64,9 +64,14 @@ std::string shellQuote(const std::string& s) {
 // paths just go through shellQuote. This is what lets the user type
 // `~/docs/notes.md` or `~` in a remote path.
 std::string shellQuoteKeepTilde(const std::string& s) {
-    if (s == "~") return "\"$HOME\"";
+    // A URI's path keeps the leading slash (ssh://host/~/a.md parses to
+    // "/~/a.md"), so the tilde forms appear both at the start and right
+    // after that slash.
+    if (s == "~" || s == "/~") return "\"$HOME\"";
     if (s.rfind("~/", 0) == 0)
         return "\"$HOME\"/" + shellQuote(s.substr(2));
+    if (s.rfind("/~/", 0) == 0)
+        return "\"$HOME\"/" + shellQuote(s.substr(3));
     return shellQuote(s);
 }
 
