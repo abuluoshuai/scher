@@ -1,0 +1,2343 @@
+#include "frontmatter_ui.h"
+// Direct2D + DirectWrite renderer for Windows
+// Much faster startup than OpenGL
+
+#include "app.h"
+
+#include <windowsx.h>
+#include <shellapi.h>
+#include <commdlg.h>
+#include <shlobj.h>
+
+#include <d3d11.h>
+
+#include <fstream>
+#include <sstream>
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <functional>
+#include <thread>
+#include "settings.h"
+#include "selection.h"
+#include "document.h"
+#include "d2d_init.h"
+#include "utils.h"
+#include "syntax.h"
+#include "search.h"
+#include "render.h"
+#include "file_utils.h"
+#include "overlays.h"
+#include "sidepanels.h"
+#include "annotations.h"
+#include "drafts.h"
+#include "signals.h"
+#include "tableedit.h"
+#include "editrail.h"
+#include "startpage.h"
+
+#include <thread>
+#include "input.h"
+#include "remote.h"
+#include "editor.h"
+#include "print.h"
+#include "export.h"
+#include "i18n.h"
+#include "tabs.h"
+#include "search_panel.h"
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp.lib")
+
+static App* g_app = nullptr;
+
+// Initializes the GPU driver on a worker thread after the first (software)
+// frame is on screen. D3D device creation costs ~200 ms dominated by
+// process-global driver initialization — done here once, the hardware
+// render target created on WM_APP_GPU_READY takes ~40 ms. The warm-up
+// device is held only until that target exists (its own device keeps the
+// driver initialized), then released — it pins tens of MB otherwise.
+static ID3D11Device* g_warmupDevice = nullptr;
+static void startGpuWarmup() {
+    std::thread([] {
+        ID3D11Device* device = nullptr;
+        ID3D11DeviceContext* ctx = nullptr;
+        D3D_FEATURE_LEVEL fl;
+        D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+                          D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0,
+                          D3D11_SDK_VERSION, &device, &fl, &ctx);
+        if (ctx) ctx->Release();
+        if (device && g_app && g_app->hwnd) {
+            g_warmupDevice = device;
+            PostMessageW(g_app->hwnd, WM_APP_GPU_READY, 0, 0);
+        } else if (device) {
+            device->Release();
+        }
+    }).detach();
+}
+
+// Windows light/dark preference (Settings > Personalization > Colors)
+static bool systemPrefersLight() {
+    DWORD value = 1, size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+            L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &value, &size) != ERROR_SUCCESS) {
+        return true;
+    }
+    return value != 0;
+}
+
+// The theme the auto mode wants right now
+static int autoThemeIndex(const App& app) {
+    return systemPrefersLight() ? app.lightThemeIndex : app.darkThemeIndex;
+}
+
+// Forward declarations
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+void render(App& app);
+
+void render(App& app) {
+    if (!app.renderTarget) return;
+
+    app.renderTarget->BeginDraw();
+    app.drawCalls = 0;
+
+    // Print preview replaces the whole frame: the document is in print
+    // layout while it is open, so the normal paths would draw nonsense
+    if (app.showPrintPreview) {
+        renderPrintPreview(app);
+        app.renderTarget->EndDraw();
+        return;
+    }
+
+    // Any viewport width change (folder browser toggle, preview split)
+    // re-flows the reading column for the space that remains
+    {
+        float vw = documentViewportWidth(app);
+        if (vw > 0.0f && vw != app.lastViewportWidth) {
+            app.lastViewportWidth = vw;
+            app.layoutDirty = true;
+        }
+    }
+
+    if (app.layoutDirty) {
+        if (app.editMode && !editorPreviewVisible(app)) {
+            // Preview hidden: defer document layout until it's shown again
+            // (the viewport is zero-width, so laying out now would be wasted
+            // work against a nonsense max width)
+        } else if (app.editMode) {
+            // The preview streams in like the viewer: visible region first,
+            // the rest in background chunks. The anchor sync clamps to
+            // whatever is laid out and self-corrects as chunks land, so
+            // entering edit mode no longer blocks on a full layout (#77)
+            layoutDocumentViewportFirst(app);
+            if (!app.layoutComplete) {
+                PostMessage(app.hwnd, WM_APP_LAYOUT_CHUNK, 0, 0);
+            }
+        } else {
+            // Lay out the visible region first so this frame presents
+            // immediately; the rest continues in WM_APP_LAYOUT_CHUNK slices
+            layoutDocumentViewportFirst(app);
+            if (!app.layoutComplete) {
+                PostMessage(app.hwnd, WM_APP_LAYOUT_CHUNK, 0, 0);
+            }
+        }
+    }
+
+    // Incremental layout grows contentHeight in small steps. Keep scrollbar
+    // visibility latched for the duration of that layout and only let its
+    // extent grow, so the right edge cannot blink as chunks arrive.
+    if (app.layoutComplete) {
+        app.scrollbarContentHeight = app.contentHeight;
+        app.verticalScrollbarVisible = app.contentHeight > app.height;
+    } else if (app.contentHeight > app.height) {
+        app.verticalScrollbarVisible = true;
+        app.scrollbarContentHeight = std::max(app.scrollbarContentHeight,
+                                              app.contentHeight);
+    }
+
+    // Sync preview scroll to editor scroll position using source-offset anchors
+    if (editorPreviewVisible(app) && !app.editorReadingPreview && !app.scrollAnchors.empty() &&
+        !app.editorLineByteOffsets.empty()) {
+        // Find the editor's top visible line (row-aware in wrap mode)
+        int topLine = (int)editorTopVisibleLine(app);
+        topLine = std::max(0, std::min(topLine, (int)app.editorLineByteOffsets.size() - 1));
+        size_t topByteOffset = app.editorLineByteOffsets[topLine];
+
+        // Binary search for the anchor just before this byte offset
+        size_t lo = 0, hi = app.scrollAnchors.size();
+        while (lo + 1 < hi) {
+            size_t mid = (lo + hi) / 2;
+            if (app.scrollAnchors[mid].sourceOffset <= topByteOffset) lo = mid;
+            else hi = mid;
+        }
+
+        // Interpolate between anchor[lo] and anchor[lo+1]
+        float targetY;
+        if (lo + 1 < app.scrollAnchors.size() &&
+            app.scrollAnchors[lo + 1].sourceOffset > app.scrollAnchors[lo].sourceOffset) {
+            float t = (float)(topByteOffset - app.scrollAnchors[lo].sourceOffset) /
+                      (float)(app.scrollAnchors[lo + 1].sourceOffset - app.scrollAnchors[lo].sourceOffset);
+            t = std::max(0.0f, std::min(t, 1.0f));
+            targetY = app.scrollAnchors[lo].renderedY +
+                       t * (app.scrollAnchors[lo + 1].renderedY - app.scrollAnchors[lo].renderedY);
+        } else {
+            // Last anchor or single anchor — use ratio for remaining content
+            targetY = app.scrollAnchors[lo].renderedY;
+            if (app.contentHeight > app.scrollAnchors[lo].renderedY) {
+                size_t lastOffset = app.scrollAnchors[lo].sourceOffset;
+                size_t totalBytes = app.editorLineByteOffsets.back();
+                if (totalBytes > lastOffset) {
+                    float t = (float)(topByteOffset - lastOffset) / (float)(totalBytes - lastOffset);
+                    t = std::max(0.0f, std::min(t, 1.0f));
+                    targetY += t * (app.contentHeight - app.scrollAnchors[lo].renderedY);
+                }
+            }
+        }
+
+        // The docked pane runs to the window's bottom edge (#245), so the
+        // preview scrolls exactly as far as the reader does
+        float previewMaxScroll =
+            std::max(0.0f, app.contentHeight - (float)app.height);
+        // renderedY includes the page's top padding below the strip;
+        // subtract it so an editor at its top means a page at its top, and
+        // snap the last half-line so the page top is always reachable
+        // (t11 feedback)
+        float alignY = targetY - documentContentTop(app);
+        float synced = std::max(0.0f, std::min(alignY, previewMaxScroll));
+        if (app.editorScrollY <= 0.5f) synced = 0.0f;
+        float editorMax = std::max(0.0f, app.editorContentHeight - (float)app.height);
+        if (app.editorScrollY >= editorMax - 1.0f) {
+            // The editor has bottomed out, but rendered content is taller
+            // than its source (images, diagrams): let the preview overshoot
+            // to reach its tail (#85). Scrolling the editor up re-syncs.
+            app.scrollY = std::min(std::max(app.scrollY, synced), previewMaxScroll);
+        } else {
+            app.scrollY = synced;
+        }
+        app.targetScrollY = app.scrollY;
+    }
+
+    // Edit mode: split view rendering — the source on the desk surface,
+    // the preview docked beside it on the reader's page (#245)
+    if (app.editMode) {
+        app.startPageShowing = false;  // recents reload on the way back
+        // The reading view (#236) is the reader's page: plain background,
+        // content clipped to the window (#242)
+        app.renderTarget->Clear(app.editorReadingPreview ? app.theme.background
+                                                         : editDeskColor(app));
+
+        float editorWidth = editorPaneWidth(app);
+        float previewX = documentViewportX(app);
+        float previewWidth = documentViewportWidth(app);
+
+        // Render editor (left pane; full width when the preview is hidden)
+        if (!app.editorReadingPreview) renderEditor(app, editorWidth);
+
+        // The docked pane's page and the seam hairline first, then the
+        // document clips into its pane: the whole window in the reading
+        // view, right of the hairline beside the source, nothing while
+        // the preview is hidden
+        renderEditPaneChrome(app);
+        {
+            float paneLeft = app.editorReadingPreview ? 0.0f
+                             : app.editorShowPreview ? editSplitDividerX(app) + 1.0f
+                                                     : (float)app.width;
+            app.renderTarget->PushAxisAlignedClip(
+                D2D1::RectF(paneLeft, 0.0f, (float)app.width, (float)app.height),
+                D2D1_ANTIALIAS_MODE_ALIASED);
+        }
+
+        D2D1_MATRIX_3X2_F originalTransform;
+        app.renderTarget->GetTransform(&originalTransform);
+        app.renderTarget->SetTransform(
+            D2D1::Matrix3x2F::Translation(previewX, 0) * originalTransform);
+
+        // The caret block's accent wash under the document content
+        if (!app.editorReadingPreview) renderPreviewCaretBlock(app, previewWidth);
+
+        goto render_document;
+    }
+
+    // Clear background
+    app.renderTarget->Clear(app.theme.background);
+    app.drawCalls++;
+
+    // Folder browser open: the document shifts right in sync with the
+    // panel's slide so it stays fully readable beside it
+    if (documentViewportX(app) > 0.0f) {
+        app.renderTarget->SetTransform(
+            D2D1::Matrix3x2F::Translation(documentViewportX(app), 0));
+    }
+
+    // Start page: the launcher draws over the (empty) document; panels,
+    // chips and overlays keep layering above it. Its recents reload on
+    // every appearance so the list is always current.
+    if (startPageActive(app)) {
+        if (!app.startPageShowing) {
+            app.startPageShowing = true;
+            startPageRefreshRecents(app);
+        }
+        renderStartPage(app);
+    } else {
+        app.startPageShowing = false;
+    }
+
+render_document:
+
+    // Apply a saved reading position once the layout can reach it (#77)
+    if (app.pendingScrollRestore >= 0.0f &&
+        (app.layoutComplete ||
+         app.contentHeight >= app.pendingScrollRestore + app.height)) {
+        app.scrollY = app.pendingScrollRestore;
+        app.targetScrollY = app.pendingScrollRestore;
+        app.pendingScrollRestore = -1.0f;
+    }
+
+    // Clamp scroll values
+    float documentWidth = documentViewportWidth(app);
+    float maxScrollX = std::max(0.0f, app.contentWidth - documentWidth);
+    float maxScrollY = std::max(0.0f, app.contentHeight - app.height);
+    app.scrollX = std::max(0.0f, std::min(app.scrollX, maxScrollX));
+    app.scrollY = std::max(0.0f, std::min(app.scrollY, maxScrollY));
+
+    // Render cached layout (document coordinates -> screen)
+    const float viewportTop = app.scrollY;
+    const float viewportBottom = app.scrollY + app.height;
+    const float viewportLeft = app.scrollX;
+    const float viewportRight = app.scrollX + documentWidth;
+    const float cullMargin = 100.0f;
+
+    for (const auto& rect : app.layoutRects) {
+        if (rect.rect.bottom < viewportTop - cullMargin ||
+            rect.rect.top > viewportBottom + cullMargin) {
+            continue;
+        }
+        if (rect.rect.right < viewportLeft - cullMargin ||
+            rect.rect.left > viewportRight + cullMargin) {
+            continue;
+        }
+        app.brush->SetColor(rect.color);
+        app.renderTarget->FillRectangle(
+            D2D1::RectF(rect.rect.left - app.scrollX, rect.rect.top - app.scrollY,
+                       rect.rect.right - app.scrollX, rect.rect.bottom - app.scrollY),
+            app.brush);
+        app.drawCalls++;
+    }
+
+    // Dashed stroke is a factory object: create once, reuse every frame
+    if (!app.dashedStrokeStyle &&
+        std::any_of(
+            app.layoutConnectors.begin(), app.layoutConnectors.end(),
+            [](const App::LayoutConnector& connector) { return connector.dashed; })) {
+        D2D1_STROKE_STYLE_PROPERTIES properties = {
+            D2D1_CAP_STYLE_FLAT,
+            D2D1_CAP_STYLE_FLAT,
+            D2D1_CAP_STYLE_FLAT,
+            D2D1_LINE_JOIN_MITER,
+            10.0f,
+            D2D1_DASH_STYLE_DASH,
+            0.0f,
+        };
+        app.d2dFactory->CreateStrokeStyle(
+            properties, nullptr, 0, &app.dashedStrokeStyle);
+    }
+    ID2D1StrokeStyle* dashedStrokeStyle = app.dashedStrokeStyle;
+
+    for (const auto& connector : app.layoutConnectors) {
+        if (connector.bounds.bottom < viewportTop - cullMargin ||
+            connector.bounds.top > viewportBottom + cullMargin ||
+            connector.bounds.right < viewportLeft - cullMargin ||
+            connector.bounds.left > viewportRight + cullMargin ||
+            connector.points.size() < 2) {
+            continue;
+        }
+
+        app.brush->SetColor(connector.color);
+        for (size_t i = 1; i < connector.points.size(); i++) {
+            const auto& from = connector.points[i - 1];
+            const auto& to = connector.points[i];
+            app.renderTarget->DrawLine(
+                D2D1::Point2F(from.x - app.scrollX, from.y - app.scrollY),
+                D2D1::Point2F(to.x - app.scrollX, to.y - app.scrollY),
+                app.brush, connector.stroke,
+                connector.dashed ? dashedStrokeStyle : nullptr);
+            app.drawCalls++;
+        }
+
+        if (connector.directed) {
+            const auto& tip = connector.points.back();
+            const auto& previous = connector.points[connector.points.size() - 2];
+            float dx = tip.x - previous.x;
+            float dy = tip.y - previous.y;
+            float length = std::sqrt(dx * dx + dy * dy);
+            if (length > 0.001f) {
+                dx /= length;
+                dy /= length;
+                float wing = connector.arrowSize * 0.5f;
+                D2D1_POINT_2F left = D2D1::Point2F(
+                    tip.x - dx * connector.arrowSize + dy * wing,
+                    tip.y - dy * connector.arrowSize - dx * wing);
+                D2D1_POINT_2F right = D2D1::Point2F(
+                    tip.x - dx * connector.arrowSize - dy * wing,
+                    tip.y - dy * connector.arrowSize + dx * wing);
+                D2D1_POINT_2F screenTip =
+                    D2D1::Point2F(tip.x - app.scrollX, tip.y - app.scrollY);
+                app.renderTarget->DrawLine(
+                    screenTip,
+                    D2D1::Point2F(left.x - app.scrollX, left.y - app.scrollY),
+                    app.brush, connector.stroke);
+                app.renderTarget->DrawLine(
+                    screenTip,
+                    D2D1::Point2F(right.x - app.scrollX, right.y - app.scrollY),
+                    app.brush, connector.stroke);
+                app.drawCalls += 2;
+            }
+        }
+    }
+    // Draws a cached polygon geometry (built lazily in local space) at the
+    // shape's screen position via a translation transform
+    auto drawPolygon = [&](const D2D1_POINT_2F* localPoints, size_t count,
+                           App::LayoutShape& shape) {
+        if (count < 3) return;
+
+        if (!shape.geometry) {
+            ID2D1PathGeometry* geometry = nullptr;
+            if (FAILED(app.d2dFactory->CreatePathGeometry(&geometry)) || !geometry) return;
+            ID2D1GeometrySink* sink = nullptr;
+            if (SUCCEEDED(geometry->Open(&sink)) && sink) {
+                sink->BeginFigure(localPoints[0], D2D1_FIGURE_BEGIN_FILLED);
+                sink->AddLines(localPoints + 1, static_cast<UINT32>(count - 1));
+                sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+                sink->Close();
+                sink->Release();
+                shape.geometry = geometry;
+            } else {
+                geometry->Release();
+                return;
+            }
+        }
+
+        D2D1_MATRIX_3X2_F previous;
+        app.renderTarget->GetTransform(&previous);
+        app.renderTarget->SetTransform(
+            D2D1::Matrix3x2F::Translation(shape.rect.left - app.scrollX,
+                                          shape.rect.top - app.scrollY) * previous);
+        if (shape.fill.a > 0.0f) {
+            app.brush->SetColor(shape.fill);
+            app.renderTarget->FillGeometry(shape.geometry, app.brush);
+            app.drawCalls++;
+        }
+        if (shape.stroke.a > 0.0f && shape.strokeWidth > 0.0f) {
+            app.brush->SetColor(shape.stroke);
+            app.renderTarget->DrawGeometry(
+                shape.geometry, app.brush, shape.strokeWidth);
+            app.drawCalls++;
+        }
+        app.renderTarget->SetTransform(previous);
+    };
+
+    for (auto& shape : app.layoutShapes) {
+        if (shape.rect.bottom < viewportTop - cullMargin ||
+            shape.rect.top > viewportBottom + cullMargin ||
+            shape.rect.right < viewportLeft - cullMargin ||
+            shape.rect.left > viewportRight + cullMargin) {
+            continue;
+        }
+
+        D2D1_RECT_F rect = D2D1::RectF(
+            shape.rect.left - app.scrollX,
+            shape.rect.top - app.scrollY,
+            shape.rect.right - app.scrollX,
+            shape.rect.bottom - app.scrollY);
+
+        if (shape.type == App::LayoutShapeType::Path) {
+            // Geometry was built eagerly at layout time in local space
+            if (!shape.geometry) continue;
+            D2D1_MATRIX_3X2_F previous;
+            app.renderTarget->GetTransform(&previous);
+            app.renderTarget->SetTransform(
+                D2D1::Matrix3x2F::Translation(shape.rect.left - app.scrollX,
+                                              shape.rect.top - app.scrollY) *
+                previous);
+            if (shape.fill.a > 0.0f) {
+                app.brush->SetColor(shape.fill);
+                app.renderTarget->FillGeometry(shape.geometry, app.brush);
+                app.drawCalls++;
+            }
+            if (shape.stroke.a > 0.0f && shape.strokeWidth > 0.0f) {
+                app.brush->SetColor(shape.stroke);
+                app.renderTarget->DrawGeometry(
+                    shape.geometry, app.brush, shape.strokeWidth);
+                app.drawCalls++;
+            }
+            app.renderTarget->SetTransform(previous);
+            continue;
+        }
+
+        if (shape.type == App::LayoutShapeType::Diamond) {
+            float w = shape.rect.right - shape.rect.left;
+            float h = shape.rect.bottom - shape.rect.top;
+            D2D1_POINT_2F points[] = {
+                D2D1::Point2F(w * 0.5f, 0),
+                D2D1::Point2F(w, h * 0.5f),
+                D2D1::Point2F(w * 0.5f, h),
+                D2D1::Point2F(0, h * 0.5f),
+            };
+            drawPolygon(points, 4, shape);
+            continue;
+        }
+
+        if (shape.type == App::LayoutShapeType::Hexagon) {
+            float w = shape.rect.right - shape.rect.left;
+            float h = shape.rect.bottom - shape.rect.top;
+            float inset = w * 0.18f;
+            D2D1_POINT_2F points[] = {
+                D2D1::Point2F(inset, 0),
+                D2D1::Point2F(w - inset, 0),
+                D2D1::Point2F(w, h * 0.5f),
+                D2D1::Point2F(w - inset, h),
+                D2D1::Point2F(inset, h),
+                D2D1::Point2F(0, h * 0.5f),
+            };
+            drawPolygon(points, 6, shape);
+            continue;
+        }
+
+        app.brush->SetColor(shape.fill);
+        if (shape.type == App::LayoutShapeType::Ellipse) {
+            D2D1_ELLIPSE ellipse = D2D1::Ellipse(
+                D2D1::Point2F(
+                    (rect.left + rect.right) * 0.5f,
+                    (rect.top + rect.bottom) * 0.5f),
+                (rect.right - rect.left) * 0.5f,
+                (rect.bottom - rect.top) * 0.5f);
+            if (shape.fill.a > 0.0f) {
+                app.renderTarget->FillEllipse(ellipse, app.brush);
+                app.drawCalls++;
+            }
+            if (shape.stroke.a > 0.0f && shape.strokeWidth > 0.0f) {
+                app.brush->SetColor(shape.stroke);
+                app.renderTarget->DrawEllipse(
+                    ellipse, app.brush, shape.strokeWidth);
+                app.drawCalls++;
+            }
+            continue;
+        }
+
+        if (shape.type == App::LayoutShapeType::RoundedRectangle ||
+            shape.type == App::LayoutShapeType::Stadium) {
+            float radius = shape.type == App::LayoutShapeType::Stadium
+                ? (rect.bottom - rect.top) * 0.5f
+                : shape.radius;
+            D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(rect, radius, radius);
+            if (shape.fill.a > 0.0f) {
+                app.renderTarget->FillRoundedRectangle(rounded, app.brush);
+                app.drawCalls++;
+            }
+            if (shape.stroke.a > 0.0f && shape.strokeWidth > 0.0f) {
+                app.brush->SetColor(shape.stroke);
+                app.renderTarget->DrawRoundedRectangle(
+                    rounded, app.brush, shape.strokeWidth);
+                app.drawCalls++;
+            }
+            continue;
+        }
+
+        if (shape.fill.a > 0.0f) {
+            app.renderTarget->FillRectangle(rect, app.brush);
+            app.drawCalls++;
+        }
+        if (shape.stroke.a > 0.0f && shape.strokeWidth > 0.0f) {
+            app.brush->SetColor(shape.stroke);
+            app.renderTarget->DrawRectangle(
+                rect, app.brush, shape.strokeWidth);
+            app.drawCalls++;
+        }
+    }
+
+    // Render images (bitmaps)
+    for (const auto& bmp : app.layoutBitmaps) {
+        if (!bmp.bitmap) continue;
+        if (bmp.destRect.bottom < viewportTop - cullMargin ||
+            bmp.destRect.top > viewportBottom + cullMargin) continue;
+        if (bmp.destRect.right < viewportLeft - cullMargin ||
+            bmp.destRect.left > viewportRight + cullMargin) continue;
+        app.renderTarget->DrawBitmap(bmp.bitmap.Get(),
+            D2D1::RectF(bmp.destRect.left - app.scrollX,
+                         bmp.destRect.top - app.scrollY,
+                         bmp.destRect.right - app.scrollX,
+                         bmp.destRect.bottom - app.scrollY));
+        app.drawCalls++;
+    }
+
+    for (const auto& run : app.layoutTextRuns) {
+        if (run.bounds.bottom < viewportTop - cullMargin ||
+            run.bounds.top > viewportBottom + cullMargin) {
+            continue;
+        }
+        if (run.bounds.right < viewportLeft - cullMargin ||
+            run.bounds.left > viewportRight + cullMargin) {
+            continue;
+        }
+        app.brush->SetColor(run.color);
+        D2D1_POINT_2F drawPos = D2D1::Point2F(run.pos.x - app.scrollX, run.pos.y - app.scrollY);
+        if (app.deviceContext) {
+            app.deviceContext->DrawTextLayout(drawPos, run.layout, app.brush,
+                D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+        } else {
+            app.renderTarget->DrawTextLayout(drawPos, run.layout, app.brush);
+        }
+        app.drawCalls++;
+    }
+
+    for (const auto& line : app.layoutLines) {
+        float minY = std::min(line.p1.y, line.p2.y);
+        float maxY = std::max(line.p1.y, line.p2.y);
+        if (maxY < viewportTop - cullMargin || minY > viewportBottom + cullMargin) {
+            continue;
+        }
+        app.brush->SetColor(line.color);
+        app.renderTarget->DrawLine(
+            D2D1::Point2F(line.p1.x - app.scrollX, line.p1.y - app.scrollY),
+            D2D1::Point2F(line.p2.x - app.scrollX, line.p2.y - app.scrollY),
+            app.brush, line.stroke);
+        app.drawCalls++;
+    }
+
+    // Render code block copy button on hover
+    if (app.hoveredCodeBlock >= 0 && app.hoveredCodeBlock < (int)app.codeBlocks.size()) {
+        const auto& cb = app.codeBlocks[app.hoveredCodeBlock];
+        if (cb.bounds.bottom >= viewportTop - cullMargin &&
+            cb.bounds.top <= viewportBottom + cullMargin) {
+            float btnW = dpi(app, 72.0f);
+            float btnH = dpi(app, 26.0f);
+            float btnPad = 8.0f * app.contentScale * app.zoomFactor;
+            // Blocks wider than the viewport keep their buttons reachable
+            float rightEdge = std::min(
+                cb.bounds.right, app.scrollX + documentViewportWidth(app));
+            float btnX = rightEdge - btnW - btnPad - app.scrollX;
+            float btnY = cb.bounds.top + btnPad - app.scrollY;
+
+            // Button background
+            app.brush->SetColor(D2D1::ColorF(
+                app.theme.isDark ? 0.3f : 0.85f,
+                app.theme.isDark ? 0.3f : 0.85f,
+                app.theme.isDark ? 0.3f : 0.85f,
+                0.9f));
+            app.renderTarget->FillRoundedRectangle(
+                D2D1::RoundedRect(D2D1::RectF(btnX, btnY, btnX + btnW, btnY + btnH), 4, 4),
+                app.brush);
+
+            // Localized copy label centered in the button
+            app.brush->SetColor(D2D1::ColorF(
+                app.theme.isDark ? 0.9f : 0.15f,
+                app.theme.isDark ? 0.9f : 0.15f,
+                app.theme.isDark ? 0.9f : 0.15f,
+                1.0f));
+            IDWriteTextLayout* btnLayout = nullptr;
+            const wchar_t* copyLabel = tr(app, "codeblock.copy");
+            app.dwriteFactory->CreateTextLayout(copyLabel, (UINT32)wcslen(copyLabel), app.codeFormat,
+                btnW, btnH, &btnLayout);
+            if (btnLayout) {
+                useUiFontFallback(app, btnLayout);
+                btnLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                btnLayout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                app.renderTarget->DrawTextLayout(
+                    D2D1::Point2F(btnX, btnY), btnLayout, app.brush);
+                btnLayout->Release();
+            }
+
+            // Diagrams add a copy-as-image button beside the source copy
+            if (cb.isDiagram) {
+                float pngW = dpi(app, 52.0f);
+                float pngX = btnX - pngW - dpi(app, 6.0f);
+
+                // Oversized diagrams add the fit-to-width toggle
+                if (cb.fitCandidate) {
+                    float fitW = dpi(app, 44.0f);
+                    float fitX = pngX - fitW - dpi(app, 6.0f);
+                    app.brush->SetColor(D2D1::ColorF(
+                        app.theme.isDark ? 0.3f : 0.85f,
+                        app.theme.isDark ? 0.3f : 0.85f,
+                        app.theme.isDark ? 0.3f : 0.85f,
+                        0.9f));
+                    app.renderTarget->FillRoundedRectangle(
+                        D2D1::RoundedRect(
+                            D2D1::RectF(fitX, btnY, fitX + fitW,
+                                        btnY + btnH), 4, 4),
+                        app.brush);
+                    app.brush->SetColor(D2D1::ColorF(
+                        app.theme.isDark ? 0.9f : 0.15f,
+                        app.theme.isDark ? 0.9f : 0.15f,
+                        app.theme.isDark ? 0.9f : 0.15f,
+                        1.0f));
+                    const wchar_t* fitLabel =
+                        cb.fitActive ? L"1:1" : L"Fit";
+                    IDWriteTextLayout* fitLayout = nullptr;
+                    app.dwriteFactory->CreateTextLayout(
+                        fitLabel, (UINT32)wcslen(fitLabel), app.codeFormat,
+                        fitW, btnH, &fitLayout);
+                    if (fitLayout) {
+                        fitLayout->SetTextAlignment(
+                            DWRITE_TEXT_ALIGNMENT_CENTER);
+                        fitLayout->SetParagraphAlignment(
+                            DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                        app.renderTarget->DrawTextLayout(
+                            D2D1::Point2F(fitX, btnY), fitLayout,
+                            app.brush);
+                        fitLayout->Release();
+                    }
+                }
+                app.brush->SetColor(D2D1::ColorF(
+                    app.theme.isDark ? 0.3f : 0.85f,
+                    app.theme.isDark ? 0.3f : 0.85f,
+                    app.theme.isDark ? 0.3f : 0.85f,
+                    0.9f));
+                app.renderTarget->FillRoundedRectangle(
+                    D2D1::RoundedRect(
+                        D2D1::RectF(pngX, btnY, pngX + pngW, btnY + btnH), 4, 4),
+                    app.brush);
+                app.brush->SetColor(D2D1::ColorF(
+                    app.theme.isDark ? 0.9f : 0.15f,
+                    app.theme.isDark ? 0.9f : 0.15f,
+                    app.theme.isDark ? 0.9f : 0.15f,
+                    1.0f));
+                IDWriteTextLayout* pngLayout = nullptr;
+                const wchar_t* pngLabel = tr(app, "diagram.png");
+                app.dwriteFactory->CreateTextLayout(
+                    pngLabel, (UINT32)wcslen(pngLabel), app.codeFormat, pngW,
+                    btnH, &pngLayout);
+                if (pngLayout) {
+                    useUiFontFallback(app, pngLayout);
+                    pngLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                    pngLayout->SetParagraphAlignment(
+                        DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    app.renderTarget->DrawTextLayout(
+                        D2D1::Point2F(pngX, btnY), pngLayout, app.brush);
+                    pngLayout->Release();
+                }
+            }
+            app.drawCalls++;
+        }
+    }
+
+    // Table copy-as-TSV button on hover (same pattern as code blocks;
+    // wide tables clamp the button into the visible viewport)
+    if (app.hoveredTable >= 0 && app.hoveredTable < (int)app.tableRects.size()) {
+        const auto& tb = app.tableRects[app.hoveredTable];
+        if (tb.bounds.bottom >= viewportTop - cullMargin &&
+            tb.bounds.top <= viewportBottom + cullMargin) {
+            float btnW = dpi(app, 88.0f);
+            float btnH = dpi(app, 26.0f);
+            float btnPad = 8.0f * app.contentScale * app.zoomFactor;
+            float rightEdge = std::min(
+                tb.bounds.right, app.scrollX + documentViewportWidth(app));
+            float btnX = rightEdge - btnW - btnPad - app.scrollX;
+            float btnY = tb.bounds.top + btnPad - app.scrollY;
+
+            app.brush->SetColor(D2D1::ColorF(
+                app.theme.isDark ? 0.3f : 0.85f,
+                app.theme.isDark ? 0.3f : 0.85f,
+                app.theme.isDark ? 0.3f : 0.85f,
+                0.9f));
+            app.renderTarget->FillRoundedRectangle(
+                D2D1::RoundedRect(
+                    D2D1::RectF(btnX, btnY, btnX + btnW, btnY + btnH), 4, 4),
+                app.brush);
+
+            app.brush->SetColor(D2D1::ColorF(
+                app.theme.isDark ? 0.9f : 0.15f,
+                app.theme.isDark ? 0.9f : 0.15f,
+                app.theme.isDark ? 0.9f : 0.15f,
+                1.0f));
+            IDWriteTextLayout* btnLayout = nullptr;
+            const wchar_t* copyLabel = tr(app, "table.copy");
+            app.dwriteFactory->CreateTextLayout(
+                copyLabel, (UINT32)wcslen(copyLabel), app.codeFormat, btnW,
+                btnH, &btnLayout);
+            if (btnLayout) {
+                useUiFontFallback(app, btnLayout);
+                btnLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                btnLayout->SetParagraphAlignment(
+                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                app.renderTarget->DrawTextLayout(
+                    D2D1::Point2F(btnX, btnY), btnLayout, app.brush);
+                btnLayout->Release();
+            }
+
+            // Oversized tables add the fit-to-width toggle
+            if (tb.fitCandidate) {
+                float fitW = dpi(app, 44.0f);
+                float fitX = btnX - fitW - dpi(app, 6.0f);
+                app.brush->SetColor(D2D1::ColorF(
+                    app.theme.isDark ? 0.3f : 0.85f,
+                    app.theme.isDark ? 0.3f : 0.85f,
+                    app.theme.isDark ? 0.3f : 0.85f,
+                    0.9f));
+                app.renderTarget->FillRoundedRectangle(
+                    D2D1::RoundedRect(
+                        D2D1::RectF(fitX, btnY, fitX + fitW, btnY + btnH),
+                        4, 4),
+                    app.brush);
+                app.brush->SetColor(D2D1::ColorF(
+                    app.theme.isDark ? 0.9f : 0.15f,
+                    app.theme.isDark ? 0.9f : 0.15f,
+                    app.theme.isDark ? 0.9f : 0.15f,
+                    1.0f));
+                const wchar_t* fitLabel = tb.fitActive ? L"1:1" : L"Fit";
+                IDWriteTextLayout* fitLayout = nullptr;
+                app.dwriteFactory->CreateTextLayout(
+                    fitLabel, (UINT32)wcslen(fitLabel), app.codeFormat,
+                    fitW, btnH, &fitLayout);
+                if (fitLayout) {
+                    fitLayout->SetTextAlignment(
+                        DWRITE_TEXT_ALIGNMENT_CENTER);
+                    fitLayout->SetParagraphAlignment(
+                        DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    app.renderTarget->DrawTextLayout(
+                        D2D1::Point2F(fitX, btnY), fitLayout, app.brush);
+                    fitLayout->Release();
+                }
+            }
+            app.drawCalls++;
+        }
+    }
+
+    // Determine scrollbar visibility
+    bool needsVScroll = app.verticalScrollbarVisible;
+    bool needsHScroll = app.contentWidth > documentWidth;
+    float scrollbarSize = dpi(app, 14.0f);
+
+    // In the panel layout, scrollbars appear on activity and quietly fade out.
+    const ULONGLONG scrollNow = GetTickCount64();
+    if (std::abs(app.scrollX - app.panelObservedScrollX) > 0.1f ||
+        std::abs(app.scrollY - app.panelObservedScrollY) > 0.1f) {
+        app.panelObservedScrollX = app.scrollX;
+        app.panelObservedScrollY = app.scrollY;
+        app.lastPanelScrollActivity = scrollNow;
+    }
+    const float scrollbarOpacity = sidePanelDocumentScrollbarOpacity(app, scrollNow);
+    const bool scrollbarNeedsTicks = sidePanelScrollbarNeedsTicks(app, scrollNow);
+    if (scrollbarNeedsTicks && !app.panelScrollbarTimerActive) {
+        app.panelScrollbarTimerActive = SetTimer(app.hwnd, TIMER_SIDE_PANEL_SCROLLBARS, 16, nullptr) != 0;
+    } else if (!scrollbarNeedsTicks && app.panelScrollbarTimerActive) {
+        KillTimer(app.hwnd, TIMER_SIDE_PANEL_SCROLLBARS);
+        app.panelScrollbarTimerActive = false;
+    }
+    const bool quietScrollbars = !app.editMode && (contentsSlotOpen(app) || app.showFolderBrowser);
+
+    // Scrollbar color: dark on light themes, light on dark themes
+    float sbColorValue = app.theme.isDark ? 1.0f : 0.0f;
+
+    // Draw vertical scrollbar
+    if (needsVScroll) {
+        float scrollExtent = std::max((float)app.height, app.scrollbarContentHeight);
+        float scrollbarMaxY = std::max(0.0f, scrollExtent - app.height);
+        float trackTop = chromeTopHeight(app);
+        float trackHeight =
+            app.height - trackTop - (needsHScroll ? scrollbarSize : 0);
+        float sbHeight = trackHeight / scrollExtent * trackHeight;
+        sbHeight = std::max(sbHeight, dpi(app, 30.0f));
+        float sbY = trackTop +
+            ((scrollbarMaxY > 0) ? (app.scrollY / scrollbarMaxY * (trackHeight - sbHeight)) : 0);
+
+        float sbWidth = quietScrollbars ? dpi(app, 4.0f) :
+            ((app.scrollbarHovered || app.scrollbarDragging) ? dpi(app, 10.0f) : dpi(app, 6.0f));
+        float sbAlpha = quietScrollbars ? 0.32f :
+            ((app.scrollbarHovered || app.scrollbarDragging) ? 0.5f : 0.3f);
+        sbAlpha *= scrollbarOpacity;
+        // Keep the thin thumb fully inside its hit band, clear of the adjacent
+        // divider's resize target. The existing 14-DIP scrollbar hit area stays.
+        const float sbInset = dpi(app, quietScrollbars ? 6.0f : 4.0f);
+
+        app.brush->SetColor(D2D1::ColorF(sbColorValue, sbColorValue, sbColorValue, sbAlpha));
+        app.renderTarget->FillRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(documentWidth - sbWidth - sbInset, sbY,
+                                          documentWidth - sbInset, sbY + sbHeight),
+                             quietScrollbars ? sbWidth / 2 : 3, quietScrollbars ? sbWidth / 2 : 3),
+            app.brush);
+        app.drawCalls++;
+
+        // Find-match ticks along the track: the document's match silhouette
+        // at a glance (overview-ruler pattern). Dense results thin out so a
+        // one-letter query cannot flood the frame with fills.
+        if (app.showSearch && !app.searchQuery.empty() &&
+            !app.searchMatches.empty() && !app.editMode) {
+            size_t step =
+                std::max<size_t>(1, app.searchMatches.size() / 400);
+            float tickLeft = documentWidth - dpi(app, 12.0f);
+            float tickRight = documentWidth - dpi(app, 2.0f);
+            auto tickY = [&](const App::SearchMatch& m, float& ty) {
+                float docY;
+                if (m.highlightRect.bottom > m.highlightRect.top) {
+                    docY = m.highlightRect.top;
+                } else if (!app.docText.empty()) {
+                    docY = (float)m.startPos / (float)app.docText.size() *
+                           scrollExtent;
+                } else {
+                    return false;
+                }
+                ty = trackTop + docY / scrollExtent * trackHeight;
+                ty = std::min(ty, trackTop + trackHeight - dpi(app, 2.0f));
+                return true;
+            };
+            app.brush->SetColor(D2D1::ColorF(1.0f, 0.82f, 0.0f, 0.55f));
+            for (size_t i = 0; i < app.searchMatches.size(); i += step) {
+                float ty;
+                if (!tickY(app.searchMatches[i], ty)) continue;
+                app.renderTarget->FillRectangle(
+                    D2D1::RectF(tickLeft, ty, tickRight, ty + dpi(app, 2.0f)),
+                    app.brush);
+            }
+            // The current match always gets its tick, stepping or not
+            if (app.searchCurrentIndex >= 0 &&
+                app.searchCurrentIndex < (int)app.searchMatches.size()) {
+                float ty;
+                if (tickY(app.searchMatches[app.searchCurrentIndex], ty)) {
+                    app.brush->SetColor(D2D1::ColorF(1.0f, 0.6f, 0.0f, 0.95f));
+                    app.renderTarget->FillRectangle(
+                        D2D1::RectF(tickLeft, ty - dpi(app, 0.5f), tickRight,
+                                    ty + dpi(app, 2.5f)),
+                        app.brush);
+                }
+            }
+            app.drawCalls++;
+        }
+    }
+
+    // Draw horizontal scrollbar
+    if (needsHScroll) {
+        float scrollbarMaxX = std::max(0.0f, app.contentWidth - documentWidth);
+        float trackWidth = documentWidth - (needsVScroll ? scrollbarSize : 0);
+        float sbWidth = trackWidth / app.contentWidth * trackWidth;
+        sbWidth = std::max(sbWidth, dpi(app, 30.0f));
+        float sbX = (scrollbarMaxX > 0) ? (app.scrollX / scrollbarMaxX * (trackWidth - sbWidth)) : 0;
+
+        float sbHeight = quietScrollbars ? dpi(app, 4.0f) :
+            ((app.hScrollbarHovered || app.hScrollbarDragging) ? dpi(app, 10.0f) : dpi(app, 6.0f));
+        float sbAlpha = quietScrollbars ? 0.32f :
+            ((app.hScrollbarHovered || app.hScrollbarDragging) ? 0.5f : 0.3f);
+        sbAlpha *= scrollbarOpacity;
+
+        app.brush->SetColor(D2D1::ColorF(sbColorValue, sbColorValue, sbColorValue, sbAlpha));
+        app.renderTarget->FillRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(sbX, app.height - sbHeight - dpi(app, 4.0f),
+                                          sbX + sbWidth, app.height - dpi(app, 4.0f)),
+                             quietScrollbars ? sbHeight / 2 : 3, quietScrollbars ? sbHeight / 2 : 3),
+            app.brush);
+        app.drawCalls++;
+    }
+
+    // Draw selection highlights from the exact [selAnchor, selFocus) glyph
+    // ranges. The copied text comes from the same range, so highlight and
+    // clipboard always agree.
+    if ((app.selecting || app.hasSelection) && !app.textRects.empty() &&
+        app.selAnchor != app.selFocus) {
+        size_t selA = std::min(app.selAnchor, app.selFocus);
+        size_t selB = std::max(app.selAnchor, app.selFocus);
+
+        std::vector<D2D1_RECT_F> bars;
+        selectionHighlightRects(app, selA, selB, bars);
+
+        app.brush->SetColor(D2D1::ColorF(0.2f, 0.4f, 0.9f, 0.35f));
+        float viewTop = app.scrollY - 50.0f;
+        float viewBottom = app.scrollY + app.height + 50.0f;
+        for (const auto& bar : bars) {
+            if (bar.bottom < viewTop || bar.top > viewBottom) continue;
+            app.renderTarget->FillRectangle(
+                D2D1::RectF(bar.left - app.scrollX, bar.top - app.scrollY,
+                            bar.right - app.scrollX, bar.bottom - app.scrollY),
+                app.brush);
+            app.drawCalls++;
+        }
+    }
+
+    // Draw search match highlights (search live through visible textRects)
+    if (app.showSearch && !app.searchQuery.empty() && !app.textRects.empty() && !app.searchMatches.empty()) {
+        // Collect visible match rects by intersecting search matches with text rects
+        struct VisibleMatch {
+            D2D1_RECT_F rect;
+            size_t matchIndex;
+        };
+        std::vector<VisibleMatch> visibleMatches;
+
+        size_t matchIndex = 0;
+        for (const auto& tr : app.textRects) {
+            size_t textLen = tr.docLength;
+            if (textLen == 0) continue;
+
+            size_t rectStart = tr.docStart;
+            size_t rectEnd = rectStart + textLen;
+
+            // Advance to first match that could overlap this rect
+            while (matchIndex < app.searchMatches.size()) {
+                const auto& m = app.searchMatches[matchIndex];
+                size_t mEnd = m.startPos + m.length;
+                if (mEnd <= rectStart) {
+                    matchIndex++;
+                    continue;
+                }
+                break;
+            }
+
+            size_t mi = matchIndex;
+            while (mi < app.searchMatches.size()) {
+                const auto& m = app.searchMatches[mi];
+                if (m.startPos >= rectEnd) break;
+
+                size_t mStart = m.startPos;
+                size_t mEnd = m.startPos + m.length;
+                size_t overlapStart = std::max(rectStart, mStart);
+                size_t overlapEnd = std::min(rectEnd, mEnd);
+
+                if (overlapStart < overlapEnd) {
+                    // Glyph-precise via the run layout (shared with text
+                    // selection); falls back to interpolation for code
+                    D2D1_RECT_F highlightRect;
+                    if (selectionRangeRect(app, tr, overlapStart, overlapEnd,
+                                           highlightRect)) {
+                        // Extend slightly for better visibility
+                        highlightRect.left -= 1;
+                        highlightRect.right += 1;
+                        visibleMatches.push_back({highlightRect, mi});
+                    }
+                }
+
+                if (mEnd <= rectEnd) {
+                    mi++;
+                } else {
+                    break;  // Match spans beyond this rect; continue on next rect
+                }
+            }
+
+            matchIndex = mi;
+        }
+
+        // Draw all matches - orange if it's the current match, yellow otherwise
+        for (const auto& vm : visibleMatches) {
+            bool isCurrent = (app.searchCurrentIndex >= 0 &&
+                              vm.matchIndex == (size_t)app.searchCurrentIndex);
+
+            if (isCurrent) {
+                app.brush->SetColor(D2D1::ColorF(1.0f, 0.6f, 0.0f, 0.5f));  // Orange
+            } else {
+                app.brush->SetColor(D2D1::ColorF(1.0f, 0.9f, 0.0f, 0.3f));  // Yellow
+            }
+
+            app.renderTarget->FillRectangle(
+                D2D1::RectF(vm.rect.left - app.scrollX, vm.rect.top - app.scrollY,
+                            vm.rect.right - app.scrollX, vm.rect.bottom - app.scrollY),
+                app.brush);
+            app.drawCalls++;
+        }
+    }
+
+    renderFrontmatterOverflow(app);
+
+    // Back to screen coordinates: notifications, stats, and overlays
+    // (including the folder browser panel itself) are not shifted
+    if (!app.editMode && documentViewportX(app) > 0.0f) {
+        app.renderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
+    }
+
+    // Review annotations: text tint, marker rail, hover preview (#126)
+    renderAnnotations(app);
+
+    // Link peek popup (dwell over a local .md link)
+    renderLinkPeek(app);
+
+    if (app.showStats) {
+        wchar_t stats[768];
+        wchar_t statsLine1[256];
+        wchar_t statsLine2[512];
+        swprintf_s(statsLine1, _countof(statsLine1), tr(app, "stats.line1"),
+            app.parseTimeUs,
+            app.layoutTimeUs,
+            app.drawCalls);
+        swprintf_s(statsLine2, _countof(statsLine2), tr(app, "stats.line2"),
+            app.metrics.totalStartupUs / 1000.0,
+            app.metrics.windowInitUs / 1000.0,
+            app.metrics.d2dInitUs / 1000.0,
+            app.metrics.dwriteInitUs / 1000.0,
+            app.metrics.fileLoadUs / 1000.0);
+        swprintf_s(stats, _countof(stats), L"Tinta v%d.%d.%d  |  %ls\n%ls",
+                   TINTA_VERSION_MAJOR, TINTA_VERSION_MINOR,
+                   TINTA_VERSION_PATCH, statsLine1, statsLine2);
+
+        float statsWidth = dpi(app, 600.0f);
+        float statsHeight = dpi(app, 50.0f);
+
+        app.brush->SetColor(D2D1::ColorF(0, 0, 0, 0.8f));
+        app.renderTarget->FillRectangle(
+            D2D1::RectF(app.width - statsWidth - dpi(app, 10.0f), app.height - statsHeight - dpi(app, 10.0f),
+                       app.width - dpi(app, 10.0f), app.height - dpi(app, 10.0f)),
+            app.brush);
+
+        app.brush->SetColor(D2D1::ColorF(0.7f, 0.9f, 0.7f));
+        app.renderTarget->DrawText(stats, (UINT32)wcslen(stats),
+            app.statsFormat ? app.statsFormat : app.codeFormat,
+            D2D1::RectF(app.width - statsWidth - dpi(app, 5.0f), app.height - statsHeight - dpi(app, 5.0f),
+                       app.width - dpi(app, 15.0f), app.height - dpi(app, 15.0f)),
+            app.brush);
+    }
+
+    // Render overlays (search overlay handled separately for edit mode)
+    if (app.showSearch && !app.editMode) renderSearchOverlay(app);
+    if (app.showFolderBrowser) renderFolderBrowser(app);
+    // The Contents slot: the outline, or the search results (#246)
+    if (app.showSearchPanel) renderSearchPanel(app);
+    else if (app.showToc) renderToc(app);
+    if (app.annotEditorOpen) renderAnnotationEditor(app);
+
+    // Close edit mode split view clipping
+    if (app.editMode) {
+        D2D1_MATRIX_3X2_F identity = D2D1::Matrix3x2F::Identity();
+        app.renderTarget->SetTransform(identity);
+        app.renderTarget->PopAxisAlignedClip();
+
+        // Quick-note empty state: Open button in the blank preview pane
+        renderQuickNoteEmptyState(app);
+
+        // In-place table editing: cell input + hover affordances (#148)
+        renderTableEditOverlay(app);
+
+        // Render search overlay in screen coordinates (over editor pane)
+        if (app.showSearch) renderSearchOverlay(app);
+    }
+
+    // Signal chips: every notification, one bottom-right system (t13).
+    // Drawn after the edit-mode clip pops and above the side panels, so
+    // chips reach the corner in both modes and over a pinned Contents
+    renderSignalChips(app);
+    renderTabRailResizeGrip(app);
+
+    // Title-bar tab strip: the caption itself, above every panel
+    renderTabStrip(app);
+
+    // Edit-mode tool rail (design t8): covers the strip's left corner
+    // and the old gutter column, so it draws above both
+    if (app.editMode) {
+        if (!app.editorReadingPreview) renderEditRail(app);
+        renderEditCtxMenu(app);
+        renderEditorReadingButton(app);
+        renderEditorWordCount(app);
+    }
+    // A resting pointer's tab: full name and folder below the strip
+    renderTabHoverCard(app);
+    if (app.showThemeChooser) renderThemeChooser(app);
+    if (app.showHelp) renderHelpOverlay(app);
+    if (app.showSettings) renderSettingsOverlay(app);
+    if (app.showLightbox) renderLightbox(app);
+    if (app.showThemeEditor) renderThemeEditor(app);
+    if (app.showShortcutEditor) renderShortcutEditor(app);
+
+    renderTabSwitcher(app);
+    renderTabMenu(app);
+    if (app.showContextMenu) renderContextMenu(app);
+    // Remote browser, recent-documents menu and its "More" dialog ride
+    // above the page but under the signal chips' dialogs
+    if (app.showRemoteBrowser) renderRemoteBrowser(app);
+    if (app.showHistoryMenu) renderHistoryMenu(app);
+    if (app.showHistoryDialog) renderHistoryDialog(app);
+
+    // Unsaved-changes dialog above it all (also entered from tab closes)
+    if (app.confirmExitPending) renderConfirmExitDialog(app);
+    if (app.createRefPending) renderCreateRefDialog(app);
+
+    app.renderTarget->EndDraw();
+}
+
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    App* app = g_app;
+
+    switch (msg) {
+        case WM_NCCALCSIZE: {
+            // Reclaim the caption: the title bar becomes the tab strip.
+            // DefWindowProc computes the resize borders, then the top edge
+            // is restored so the client area reaches the top of the window.
+            if (!wParam || !app || app->zenMode) break;
+            NCCALCSIZE_PARAMS* params =
+                reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam);
+            RECT original = params->rgrc[0];
+            DefWindowProcW(hwnd, WM_NCCALCSIZE, wParam, lParam);
+            params->rgrc[0].top = original.top;
+            if (IsZoomed(hwnd)) {
+                params->rgrc[0].top += GetSystemMetrics(SM_CYSIZEFRAME) +
+                                       GetSystemMetrics(SM_CXPADDEDBORDER);
+            }
+            return 0;
+        }
+
+        case WM_NCHITTEST: {
+            if (!app || app->zenMode) break;
+            LRESULT def = DefWindowProcW(hwnd, WM_NCHITTEST, wParam, lParam);
+            if (def != HTCLIENT) return def;  // resize borders
+            POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            ScreenToClient(hwnd, &pt);
+            float x = (float)pt.x, y = (float)pt.y;
+            if (y >= chromeTopHeight(*app)) return HTCLIENT;
+            if (!IsZoomed(hwnd) &&
+                y < (float)GetSystemMetrics(SM_CYSIZEFRAME)) {
+                return HTTOP;
+            }
+            if (appMenuButtonAt(*app, x, y)) return HTCLIENT;
+            int button = captionHitTest(*app, x, y);
+            if (button == 1) return HTMINBUTTON;
+            if (button == 2) return HTMAXBUTTON;  // Win11 snap flyout
+            if (button == 3) return HTCLOSE;
+            // The settings backdrop also owns clicks on empty caption space.
+            if (app->showSettings) return HTCLIENT;
+            for (const App::TabHit& hit : app->tabHits) {
+                if (x >= hit.rect.left && x <= hit.rect.right &&
+                    y >= hit.rect.top && y <= hit.rect.bottom) {
+                    return HTCLIENT;  // tabs, +, chevron take normal clicks
+                }
+            }
+            return HTCAPTION;  // empty strip drags the window
+        }
+
+        case WM_NCMOUSEMOVE: {
+            if (!app || app->zenMode) break;
+            POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            ScreenToClient(hwnd, &pt);
+            int hover = captionHitTest(*app, (float)pt.x, (float)pt.y);
+            if (hover != app->captionButtonHover) {
+                app->captionButtonHover = hover;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            TRACKMOUSEEVENT track = {sizeof(track), TME_NONCLIENT | TME_LEAVE,
+                                     hwnd, 0};
+            TrackMouseEvent(&track);
+            break;
+        }
+
+        case WM_NCMOUSELEAVE:
+            if (app && (app->captionButtonHover || app->captionButtonPressed)) {
+                app->captionButtonHover = 0;
+                app->captionButtonPressed = 0;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            break;
+
+        case WM_KILLFOCUS:
+            if (app) tabHoverCardDismiss(*app, hwnd);
+            if (app) searchInputMouseUp(*app);
+            if (app) cancelDocumentScrollbarDrag(*app, hwnd);
+            if (app) sidePanelResizeEnd(*app, hwnd, true);
+            if (app && app->showContextMenu) {
+                closeContextMenu(*app);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            break;
+
+        case WM_NCLBUTTONDOWN:
+            if (app && app->showContextMenu) {
+                closeContextMenu(*app);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            if (app && !app->zenMode &&
+                (wParam == HTMINBUTTON || wParam == HTMAXBUTTON ||
+                 wParam == HTCLOSE)) {
+                app->captionButtonPressed =
+                    wParam == HTMINBUTTON ? 1 : wParam == HTMAXBUTTON ? 2 : 3;
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;  // consume: no legacy button painting
+            }
+            break;
+
+        case WM_NCLBUTTONUP:
+            if (app && app->captionButtonPressed) {
+                POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                ScreenToClient(hwnd, &pt);
+                int released = captionHitTest(*app, (float)pt.x, (float)pt.y);
+                int pressed = app->captionButtonPressed;
+                app->captionButtonPressed = 0;
+                InvalidateRect(hwnd, nullptr, FALSE);
+                if (released == pressed) {
+                    if (pressed == 1) {
+                        PostMessageW(hwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
+                    } else if (pressed == 2) {
+                        PostMessageW(hwnd, WM_SYSCOMMAND,
+                                     IsZoomed(hwnd) ? SC_RESTORE : SC_MAXIMIZE,
+                                     0);
+                    } else {
+                        PostMessageW(hwnd, WM_SYSCOMMAND, SC_CLOSE, 0);
+                    }
+                }
+                return 0;
+            }
+            break;
+
+        case WM_NCRBUTTONUP:
+            if (app && !app->zenMode && wParam == HTCAPTION) {
+                POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                ScreenToClient(hwnd, &pt);
+                if (tabContextMenuIndexAt(*app, (float)pt.x, (float)pt.y) >= 0) {
+                    handleContextMenu(*app, hwnd, lParam);
+                    return 0;
+                }
+                HMENU menu = GetSystemMenu(hwnd, FALSE);
+                if (menu) {
+                    int cmd = TrackPopupMenu(
+                        menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                        GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), 0, hwnd,
+                        nullptr);
+                    if (cmd) PostMessageW(hwnd, WM_SYSCOMMAND, cmd, 0);
+                }
+                return 0;
+            }
+            break;
+
+        case WM_MBUTTONDOWN:
+            if (app) tabHoverCardDismiss(*app, hwnd);
+            if (app && app->renderTarget) {
+                int mx = GET_X_LPARAM(lParam);
+                int my = GET_Y_LPARAM(lParam);
+                if ((float)my < chromeTopHeight(*app) ||
+                    tabRailHitZone(*app, (float)mx, (float)my)) {
+                    tabStripMouseDown(*app, hwnd, mx, my, true);
+                    return 0;
+                }
+            }
+            break;
+
+        case WM_CLOSE:
+            if (app) tableEditCommit(*app);
+            // "Close without asking" (#252): unsaved buffers stay behind as
+            // drafts, offered back on the next launch, and the window closes
+            if (app && app->closeKeepsDrafts) {
+                draftsSweep(*app);
+                app->confirmExitPending = false;
+                app->pendingWindowClose = false;
+                break;
+            }
+            // Unsaved buffers (active or parked in tabs) get the dialog
+            // before the window may close; tabs stay open so the session
+            // save still remembers them
+            if (app && app->confirmExitPending) {
+                app->pendingWindowClose = true;  // dialog is already asking
+                return 0;
+            }
+            if (app) {
+                for (size_t i = 0; i < app->tabs.size(); i++) {
+                    bool dirty = (int)i == app->activeTab
+                                     ? (app->editMode && app->editorDirty)
+                                     : (app->tabs[i].editMode &&
+                                        app->tabs[i].editorDirty);
+                    if (!dirty) continue;
+                    if ((int)i != app->activeTab) {
+                        tabActivate(*app, hwnd, (int)i);
+                    }
+                    app->pendingWindowClose = true;
+                    app->confirmExitPending = true;
+                    app->confirmExitOpenedAt = std::chrono::steady_clock::now();
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    return 0;
+                }
+            }
+            break;
+
+        case WM_COPYDATA:
+            if (app) {
+                COPYDATASTRUCT* data =
+                    reinterpret_cast<COPYDATASTRUCT*>(lParam);
+                if (data && tabReceiveCopyData(*app, hwnd, *data)) {
+                    if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+                    SetForegroundWindow(hwnd);
+                    return TRUE;
+                }
+            }
+            break;
+
+        case WM_SIZE:
+            if (app && app->d2dFactory) {
+                sidePanelResizeEnd(*app, hwnd, true);
+                closeContextMenu(*app);  // its anchor belongs to the old viewport
+                // The preview's geometry is stale after a resize: restore
+                // the document at the new size and close the overlay
+                if (app->showPrintPreview) {
+                    app->printSaved.width = LOWORD(lParam);
+                    app->printSaved.height = HIWORD(lParam);
+                    closePrintPreview(*app, hwnd);
+                }
+                app->width = LOWORD(lParam);
+                app->height = HIWORD(lParam);
+                app->clearEditorLineLayoutCache();
+                // Resize the target in place: device resources (image and
+                // diagram bitmaps) stay valid, unlike a full recreation
+                if (!app->renderTarget ||
+                    FAILED(app->renderTarget->Resize(
+                        D2D1::SizeU(app->width, app->height)))) {
+                    createRenderTarget(*app);
+                }
+                app->layoutDirty = true;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+
+        case WM_SETTINGCHANGE:
+            // Windows switched light/dark mode
+            if (app && app->followSystemTheme && lParam &&
+                wcscmp((const wchar_t*)lParam, L"ImmersiveColorSet") == 0) {
+                int want = autoThemeIndex(*app);
+                if (want != app->currentThemeIndex) {
+                    applyTheme(*app, want);
+                    persistThemeChoice(*app);
+                }
+            }
+            return 0;
+
+        case WM_DPICHANGED:
+            if (app) {
+                sidePanelResizeEnd(*app, hwnd, true);
+                if (app->showPrintPreview) closePrintPreview(*app, hwnd);
+                UINT dpi = HIWORD(wParam);
+                app->contentScale = dpi / 96.0f;
+
+                // Resize window to suggested new size
+                RECT* newRect = (RECT*)lParam;
+                SetWindowPos(hwnd, nullptr,
+                    newRect->left, newRect->top,
+                    newRect->right - newRect->left,
+                    newRect->bottom - newRect->top,
+                    SWP_NOZORDER | SWP_NOACTIVATE);
+
+                // Recreate text formats and render target for new DPI
+                updateTextFormats(*app);
+                createRenderTarget(*app);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            BeginPaint(hwnd, &ps);
+            if (app) render(*app);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+
+        case WM_MOUSEWHEEL:
+            if (app) handleMouseWheel(*app, hwnd, wParam, lParam);
+            return 0;
+
+        case WM_MOUSEHWHEEL:
+            if (app) handleMouseHWheel(*app, hwnd, wParam, lParam);
+            return 0;
+
+        case WM_MOUSEMOVE:
+            if (app) handleMouseMove(*app, hwnd, lParam);
+            return 0;
+
+        case WM_LBUTTONDOWN:
+            if (app) handleMouseDown(*app, hwnd, wParam, lParam);
+            return 0;
+
+        case WM_LBUTTONUP:
+            if (app) handleMouseUp(*app, hwnd, wParam, lParam);
+            return 0;
+
+        case WM_ENTERSIZEMOVE:
+            if (app) {
+                app->windowMoveTracking = true;
+                GetWindowRect(hwnd, &app->windowMoveStartRect);
+            }
+            break;
+
+        case WM_EXITSIZEMOVE:
+            // A finished native window MOVE may be a drop onto another
+            // Tinta window's strip; resizes land here too, so only a
+            // changed position with an unchanged size qualifies
+            if (app && app->windowMoveTracking) {
+                app->windowMoveTracking = false;
+                RECT now;
+                const RECT& was = app->windowMoveStartRect;
+                if (GetWindowRect(hwnd, &now) &&
+                    (now.left != was.left || now.top != was.top) &&
+                    now.right - now.left == was.right - was.left &&
+                    now.bottom - now.top == was.bottom - was.top) {
+                    tabWindowDropMerge(*app, hwnd);
+                }
+            }
+            break;
+
+        case WM_CAPTURECHANGED:
+            if (app && (HWND)lParam != hwnd) cancelAppMenuPress(*app, hwnd);
+            if (app && (HWND)lParam != hwnd) tableEditMouseUp(*app);
+            if (app && (HWND)lParam != hwnd) searchInputMouseUp(*app);
+            if (app && (HWND)lParam != hwnd && app->frontmatterDrag >= 0) {
+                app->frontmatterDrag = app->frontmatterDrop = -1;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            if (app && (HWND)lParam != hwnd) cancelDocumentScrollbarDrag(*app, hwnd);
+            if (app && (HWND)lParam != hwnd) sidePanelResizeEnd(*app, hwnd, true);
+            // Losing capture mid tab-drag (Alt+Tab, a popup stealing the
+            // mouse) aborts the drag instead of leaving a stray ghost
+            if (app && app->tabDragIndex >= 0 && (HWND)lParam != hwnd) {
+                tabDragCancel(*app, hwnd);
+            }
+            return 0;
+
+        case WM_CANCELMODE:
+            if (app) cancelAppMenuPress(*app, hwnd);
+            if (app) tableEditMouseUp(*app);
+            if (app) searchInputMouseUp(*app);
+            if (app && app->frontmatterDrag >= 0) {
+                app->frontmatterDrag = app->frontmatterDrop = -1;
+                if (GetCapture() == hwnd) ReleaseCapture();
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            if (app) cancelDocumentScrollbarDrag(*app, hwnd);
+            if (app) sidePanelResizeEnd(*app, hwnd, true);
+            break;
+
+        case WM_MOUSELEAVE:
+            if (app && GetCapture() != hwnd) {
+                app->mouseX = app->mouseY = -1;
+                app->scrollbarHovered = app->hScrollbarHovered = false;
+                // The Read button fades out and the seam hairline dims (#245)
+                editorReadingButtonHover(*app, -1.0f, -1.0f);
+                app->editSeamHover = false;
+                // Off the tab strip too: its hover and hover card (#246)
+                tabHoverCardLeave(*app, hwnd);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+
+        case WM_SETCURSOR:
+            if (app && LOWORD(lParam) == HTCLIENT) {
+                // We handle cursor in WM_MOUSEMOVE
+                return TRUE;
+            }
+            break;
+
+        case WM_KEYDOWN:
+            if (app) return handleKeyDown(*app, hwnd, wParam) ? 1 : 0;
+            return 0;
+
+        case WM_XBUTTONUP:
+            // Mouse side buttons walk back/forward across link jumps
+            if (app) {
+                if (GET_XBUTTON_WPARAM(wParam) == XBUTTON1) {
+                    navigateBack(*app, hwnd);
+                } else if (GET_XBUTTON_WPARAM(wParam) == XBUTTON2) {
+                    navigateForward(*app, hwnd);
+                }
+            }
+            return TRUE;
+
+        case WM_SYSKEYDOWN:
+            if (app) tabHoverCardDismiss(*app, hwnd);
+            // A fresh Alt press (not its autorepeat) starts a new gesture
+            if (app && wParam == VK_MENU && !(lParam & (1 << 30))) {
+                app->altClickGuard = false;
+            }
+            if (app && wParam == VK_F10) {
+                handleKeyDown(*app, hwnd, wParam);
+                return 0;
+            }
+            // Alt+Up / Alt+Down move the editor's lines (#251)
+            if (app && editorAltArrowKey(*app, hwnd, wParam)) return 0;
+            // Alt+Left / Alt+Right mirror the mouse side buttons
+            if (app && (lParam & (1 << 29)) &&
+                !(GetKeyState(VK_CONTROL) & 0x8000) && !(GetKeyState(VK_SHIFT) & 0x8000) &&
+                (wParam == VK_LEFT || wParam == VK_RIGHT)) {
+                if (wParam == VK_LEFT) navigateBack(*app, hwnd);
+                else navigateForward(*app, hwnd);
+                return 0;
+            }
+            break;
+
+        case WM_CHAR:
+            if (app) handleCharInput(*app, hwnd, wParam);
+            return 0;
+
+        case WM_SYSCOMMAND:
+            // Releasing Alt after an Alt+click (#251) is not a menu request
+            if (app && (wParam & 0xFFF0) == SC_KEYMENU && lParam == 0 && app->altClickGuard) {
+                app->altClickGuard = false;
+                return 0;
+            }
+            break;
+
+        case WM_IME_STARTCOMPOSITION:
+        case WM_IME_COMPOSITION:
+            // Anchor the IME composition/candidate window at the caret in
+            // edit mode, then let DefWindowProc run default IME handling
+            if (app) editorPositionImeWindow(*app, hwnd);
+            break;
+
+        case WM_DROPFILES:
+            if (app) handleDropFiles(*app, hwnd, wParam);
+            return 0;
+
+        case WM_TIMER:
+            if (wParam == TIMER_SIDE_PANEL_SCROLLBARS && app) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                if (app->editMode || app->showPrintPreview || (!contentsSlotOpen(*app) && !app->showFolderBrowser)) {
+                    KillTimer(hwnd, TIMER_SIDE_PANEL_SCROLLBARS);
+                    app->panelScrollbarTimerActive = false;
+                }
+            }
+            if (wParam == TIMER_LINK_PEEK && app) handleLinkPeekTimer(*app, hwnd);
+            if (wParam == TIMER_TAB_HOVER_CARD && app) handleTabHoverCardTimer(*app, hwnd);
+            if (wParam == TIMER_HISTORY_HOVER && app) {
+                // The dwell elapsed: open the menu when the pointer is
+                // still on the button
+                KillTimer(hwnd, TIMER_HISTORY_HOVER);
+                // Judge the pointer from its own coordinates: the button's
+                // hot flag only refreshes while the caption repaints
+                D2D1_RECT_F btn = historyButtonRect(*app);
+                bool hot = (float)app->mouseX >= btn.left &&
+                           (float)app->mouseX <= btn.right &&
+                           (float)app->mouseY >= btn.top &&
+                           (float)app->mouseY <= btn.bottom;
+                if (app->historyHoverAt && hot && !app->showHistoryMenu &&
+                    !app->showHistoryDialog && !app->showRemoteBrowser &&
+                    !app->zenMode) {
+                    app->showHistoryMenu = true;
+                    app->historyHoverAt = 0;
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+            }
+            if (wParam == TIMER_FILE_WATCH && app) handleFileWatchTimer(*app, hwnd);
+            if (wParam == 2 && app) editorReparse(*app); // TIMER_EDITOR_REPARSE
+            if (wParam == TIMER_CURSOR_BLINK && app) {
+                app->cursorBlinkOn = !app->cursorBlinkOn;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            if (wParam == TIMER_NOTIFICATION && app) {
+                // Only draining chips and the Read button's fade need
+                // repaints; prompts are static until answered
+                bool fading = signalsNeedTicks(*app) ||
+                              editorReadingButtonNeedsTicks(*app);
+                if (fading) {
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                } else {
+                    KillTimer(hwnd, TIMER_NOTIFICATION);
+                }
+            }
+            if (wParam == TIMER_FOLDER_SEARCH && app) {
+                KillTimer(hwnd, TIMER_FOLDER_SEARCH);
+                startFolderSearchScan(*app);
+            }
+            if (wParam == TIMER_DRAFT_SAVE && app) {
+                draftsSweep(*app);
+            }
+            if (wParam == TIMER_SELECT_SCROLL && app) {
+                handleSelectScrollTimer(*app, hwnd);
+            }
+            if (wParam == TIMER_IMAGE_REFLOW && app) {
+                // One relayout for however many images arrived since armed
+                KillTimer(hwnd, TIMER_IMAGE_REFLOW);
+                app->layoutDirty = true;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            if (wParam == TIMER_ZOOM_APPLY && app) {
+                if (app->zoomFactor != app->appliedZoomFactor) {
+                    // More zoom ticks arrived since the last apply
+                    updateTextFormats(*app);
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                } else {
+                    KillTimer(hwnd, TIMER_ZOOM_APPLY);
+                    app->zoomApplyPending = false;
+                }
+            }
+            return 0;
+
+        case WM_APP_IMAGE_READY:
+            // A background image download finished: swap it into the cache
+            // and reflow (handler takes ownership of the result)
+            if (app) completeAsyncImage(*app, (void*)lParam);
+            else discardAsyncImage((void*)lParam);
+            return 0;
+
+        case WM_CONTEXTMENU:
+            if (app) tabHoverCardDismiss(*app, hwnd);
+            if (app) handleContextMenu(*app, hwnd, lParam);
+            return 0;
+
+        case WM_APP_FOLDER_SEARCH:
+            // Folder search worker finished (handler takes ownership)
+            if (app) completeFolderSearch(*app, (void*)lParam);
+            return 0;
+
+        case WM_APP_REMOTE_TASK:
+            // An ssh worker finished a listing or a file read
+            if (app) handleRemoteTask(*app);
+            return 0;
+
+        case WM_APP_PANDOC_DONE:
+            if (app) {
+                app->pandocRunning = false;
+                if (wParam) {
+                    signalPushKey(*app, SIG_SUCCESS, SIGI_CHECK,
+                                  "toast.pandoc_ok");
+                } else {
+                    signalPushKey(*app, SIG_ERROR, SIGI_WARNING,
+                                  "toast.pandoc_fail");
+                }
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+
+        case WM_APP_GPU_READY:
+            // Driver is warm: swap the startup software render target for a
+            // hardware one. The recreated target's own device keeps the
+            // driver initialized, so the warm-up device can go.
+            if (app && !app->useHardwareRT) {
+                app->useHardwareRT = true;
+                createRenderTarget(*app);
+                app->layoutDirty = true;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            if (g_warmupDevice) {
+                g_warmupDevice->Release();
+                g_warmupDevice = nullptr;
+            }
+            return 0;
+
+        case WM_APP_LAYOUT_CHUNK:
+            // Continue an incomplete document layout in ~10ms slices, yielding
+            // to input between slices
+            if (app && !app->layoutDirty && !app->layoutComplete) {
+                bool done = layoutDocumentContinue(*app, 10000);
+                InvalidateRect(hwnd, nullptr, FALSE);  // scrollbar grows as layout fills in
+                if (!done) PostMessage(hwnd, WM_APP_LAYOUT_CHUNK, 0, 0);
+            }
+            return 0;
+
+        case WM_DESTROY:
+            KillTimer(hwnd, TIMER_FILE_WATCH);
+            KillTimer(hwnd, 2); // TIMER_EDITOR_REPARSE
+            KillTimer(hwnd, TIMER_CURSOR_BLINK);
+            KillTimer(hwnd, TIMER_NOTIFICATION);
+            KillTimer(hwnd, TIMER_ZOOM_APPLY);
+            KillTimer(hwnd, TIMER_DRAFT_SAVE);
+            // A graceful close resolved every dirty buffer through the
+            // unsaved-changes flow; leftover drafts would resurrect
+            // content the user already decided about. With "Close without
+            // asking" the drafts are the decision (#252): they stay.
+            if (app && !app->closeKeepsDrafts) draftsDeleteAll(*app);
+            {
+                // Load existing settings to preserve values like hasAskedFileAssociation
+                Settings settings = loadSettings();
+                settings.themeIndex = app->currentThemeIndex;
+                settings.zoomFactor = app->zoomFactor;
+                settings.editorShowPreview = app->editorShowPreview;
+                settings.editorWordWrap = app->editorWordWrap;
+                // Hint sessions only count up: another window may have
+                // used some since this one started (#245)
+                settings.editHintsShown =
+                    std::max(settings.editHintsShown, app->editHintsShown);
+                settings.editorAssists = app->editorAssists;
+                // showWordCount, closeKeepsDrafts and printMarginMm persist
+                // when changed and stay as on disk here, like openInTabs below
+                settings.followSystemTheme = app->followSystemTheme;
+                settings.lightThemeIndex = app->lightThemeIndex;
+                settings.darkThemeIndex = app->darkThemeIndex;
+                settings.folderSearchEnabled = app->folderSearchEnabled;
+                settings.tabSearchEnabled = app->tabSearchEnabled;
+                settings.browserFocusPath = app->browserFocusPath;
+                // openInTabs persists at toggle time (persistOpenInTabs)
+                // and is preserved from disk here: a window opened before
+                // the toggle must not write its stale value back at exit
+                // Remember the open tab set for the next launch (untitled
+                // quick-note buffers have no path to restore). Satellite
+                // windows never own the session: they re-read the owner's
+                // stored session so their full-file save cannot clobber a
+                // newer one with launch-time data.
+                if (app->sessionOwner) {
+                    settings.sessionTabs.clear();
+                    settings.sessionActive = 0;
+                    for (size_t i = 0; i < app->tabs.size(); i++) {
+                        const std::string& path =
+                            (int)i == app->activeTab ? app->currentFile
+                                                     : app->tabs[i].path;
+                        if (path.empty()) continue;
+                        if ((int)i == app->activeTab) {
+                            settings.sessionActive =
+                                (int)settings.sessionTabs.size();
+                        }
+                        settings.sessionTabs.push_back(path);
+                    }
+                } else {
+                    Settings onDisk = loadSettings();
+                    settings.sessionTabs = onDisk.sessionTabs;
+                    settings.sessionActive = onDisk.sessionActive;
+                }
+                settings.readingWidthPct = app->readingWidthPct;
+                settings.zenWidthPct = app->zenWidthPct;
+                settings.headingRules = app->headingRules;
+                settings.tocOnLeft = app->tocOnLeft;
+                settings.tabsOnLeft = app->tabsOnLeft;
+                settings.tabsWidth = app->tabsWidth;
+                settings.tocPinned = app->tocPinned;
+                settings.browserPinned = app->browserPinned;
+                settings.language = app->languageSetting >= 0
+                    ? languageIdAt(app->languageSetting) : "auto";
+                settings.keyProfile = app->keyProfile;
+                settings.keyOverrides = app->keyOverrides;
+                if (!app->currentFile.empty()) {
+                    float progress = -1.0f;
+                    if (!app->tabs.empty() && app->activeTab >= 0 &&
+                        app->activeTab < (int)app->tabs.size()) {
+                        progress = app->tabs[app->activeTab].readProgress;
+                    }
+                    rememberReadingPosition(settings, app->currentFile,
+                                            app->scrollY, app->zoomFactor,
+                                            progress);
+                }
+
+                // Get window placement for position/size/maximized state
+                WINDOWPLACEMENT wp = {};
+                wp.length = sizeof(wp);
+                if (GetWindowPlacement(hwnd, &wp)) {
+                    settings.windowMaximized = (wp.showCmd == SW_SHOWMAXIMIZED);
+                    // Save the restored (non-maximized) position
+                    settings.windowX = wp.rcNormalPosition.left;
+                    settings.windowY = wp.rcNormalPosition.top;
+                    settings.windowWidth = wp.rcNormalPosition.right - wp.rcNormalPosition.left;
+                    settings.windowHeight = wp.rcNormalPosition.bottom - wp.rcNormalPosition.top;
+                }
+
+                saveSettings(settings);
+            }
+            PostQuitMessage(0);
+            return 0;
+    }
+
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+// The bare-launch tutorial moved to startpage.cpp: failed loads fall
+// back to the start page, which keeps the sample behind a Learn card
+
+// Last-chance handler: writes %LOCALAPPDATA%\Tinta\crash.dmp so crash
+// reports from the field carry a usable stack
+static LONG WINAPI writeCrashDump(EXCEPTION_POINTERS* exceptionInfo) {
+    wchar_t path[MAX_PATH];
+    DWORD len = GetEnvironmentVariableW(L"LOCALAPPDATA", path, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) return EXCEPTION_CONTINUE_SEARCH;
+    std::wstring dir = std::wstring(path) + L"\\Tinta";
+    CreateDirectoryW(dir.c_str(), nullptr);
+    std::wstring file = dir + L"\\crash.dmp";
+    HANDLE dump = CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr,
+                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (dump != INVALID_HANDLE_VALUE) {
+        MINIDUMP_EXCEPTION_INFORMATION info;
+        info.ThreadId = GetCurrentThreadId();
+        info.ExceptionPointers = exceptionInfo;
+        info.ClientPointers = FALSE;
+        MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), dump,
+                          MiniDumpWithIndirectlyReferencedMemory, &info,
+                          nullptr, nullptr);
+        CloseHandle(dump);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
+    SetUnhandledExceptionFilter(writeCrashDump);
+    // Enable per-monitor DPI V2 awareness
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+    auto startupStart = Clock::now();
+
+    App app;
+    auto t0 = startupStart;
+    g_app = &app;
+
+    // Load user themes before settings: saved theme indices may point at them
+    loadCustomThemes();
+    loadLanguageOverrides();
+
+    // Load saved settings
+    Settings savedSettings = loadSettings();
+    app.followSystemTheme = savedSettings.followSystemTheme;
+
+    app.lightThemeIndex = savedSettings.lightThemeIndex;
+    app.darkThemeIndex = savedSettings.darkThemeIndex;
+    app.folderSearchEnabled = savedSettings.folderSearchEnabled;
+    app.tabSearchEnabled = savedSettings.tabSearchEnabled;
+    app.browserFocusPath = savedSettings.browserFocusPath;
+    app.openInTabs = savedSettings.openInTabs;
+    app.editorAssists = savedSettings.editorAssists;
+    app.showWordCount = savedSettings.showWordCount;
+    app.printMarginMm = savedSettings.printMarginMm;
+    app.closeKeepsDrafts = savedSettings.closeKeepsDrafts;
+    app.frontmatter = savedSettings.frontmatter;
+    app.pandocUserPath = toWide(savedSettings.pandocPath);
+    int startTheme = app.followSystemTheme ? autoThemeIndex(app)
+                                           : savedSettings.themeIndex;
+    app.currentThemeIndex = startTheme;
+    if (startTheme >= themeCount()) startTheme = 0;
+    app.currentThemeIndex = startTheme;
+    app.theme = themeAt(startTheme);
+    app.darkMode = app.theme.isDark;
+    app.zoomFactor = savedSettings.zoomFactor;
+    app.editorShowPreview = savedSettings.editorShowPreview;
+    app.editorWordWrap = savedSettings.editorWordWrap;
+    app.editHintsShown = savedSettings.editHintsShown;
+    app.readingWidthPct = savedSettings.readingWidthPct;
+    app.zenWidthPct = savedSettings.zenWidthPct;
+    app.headingRules = savedSettings.headingRules;
+    app.tocOnLeft = savedSettings.tocOnLeft;
+    app.tabsOnLeft = savedSettings.tabsOnLeft;
+    app.tabsWidth = savedSettings.tabsWidth;
+    app.tocPinned = savedSettings.tocPinned;
+    app.browserPinned = savedSettings.browserPinned;
+    app.tocWidth = savedSettings.tocWidth;
+    app.browserWidth = savedSettings.browserWidth;
+    app.languageSetting = savedSettings.language == "auto"
+        ? -1 : languageIndexById(savedSettings.language);
+    app.currentLanguageIndex = app.languageSetting >= 0
+        ? app.languageSetting : detectSystemLanguage();
+    app.keyOverrides = savedSettings.keyOverrides;
+    applyKeymap(app, savedSettings);
+
+    // Parse command line
+    std::string inputFile;
+    bool lightMode = false;
+    bool forceRegister = false;
+    bool cascadeWindow = false;   // offset from the saved position (new-file windows)
+    bool startInEditMode = false; // open straight into the editor
+    bool quickNote = false;       // Ctrl+N: untitled buffer, no backing file
+    std::wstring printPagesDir;   // debug: render print pages as PNGs and exit
+    std::wstring exportHtmlPath;  // debug: write the HTML export and exit
+    std::wstring exportDocxPath;  // debug: write the DOCX export and exit
+    std::wstring exportPdfPath;   // debug: write the PDF export and exit
+    int posX = 0, posY = 0;       // --pos: spawn position (tab drag-out)
+    bool hasPos = false;
+    std::wstring remoteTestReport;  // --remote-tests: self-test, then exit
+
+    int argc;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    for (int i = 1; i < argc; i++) {
+        std::wstring arg = argv[i];
+        if (arg == L"-l" || arg == L"--light") {
+            lightMode = true;
+        } else if (arg == L"-s" || arg == L"--stats") {
+            app.showStats = true;
+        } else if (arg == L"/register" || arg == L"--register") {
+            forceRegister = true;
+        } else if (arg == L"--cascade") {
+            cascadeWindow = true;
+        } else if (arg == L"--tabbed") {
+            // Drag-out satellites keep the tab row even with one tab
+            app.forceTabStrip = true;
+        } else if (arg == L"--edit") {
+            startInEditMode = true;
+        } else if (arg == L"--new") {
+            quickNote = true;
+        } else if (arg == L"--printpages" && i + 1 < argc) {
+            printPagesDir = argv[++i];
+        } else if (arg == L"--exporthtml" && i + 1 < argc) {
+            exportHtmlPath = argv[++i];
+        } else if (arg == L"--exportdocx" && i + 1 < argc) {
+            exportDocxPath = argv[++i];
+        } else if (arg == L"--exportpdf" && i + 1 < argc) {
+            exportPdfPath = argv[++i];
+        } else if (arg == L"--remote-tests" && i + 1 < argc) {
+            remoteTestReport = argv[++i];
+        } else if (arg == L"--pos" && i + 2 < argc) {
+            // Drag-out spawn: place the new window at the drop point
+            posX = _wtoi(argv[++i]);
+            posY = _wtoi(argv[++i]);
+            hasPos = true;
+        } else if (arg[0] != L'-' && arg[0] != L'/') {
+            // Convert to UTF-8
+            int len = WideCharToMultiByte(CP_UTF8, 0, arg.c_str(), -1, nullptr, 0, nullptr, nullptr);
+            inputFile.resize(len - 1);
+            WideCharToMultiByte(CP_UTF8, 0, arg.c_str(), -1, &inputFile[0], len, nullptr, nullptr);
+        }
+    }
+    LocalFree(argv);
+
+    // Relative paths resolve against the launch folder, then the process
+    // leaves it: Explorer starts Tinta inside the document's folder, and
+    // Windows will not delete or rename a folder that a running process
+    // works in (#253)
+    auto resolveArgument = [](const std::wstring& path) {
+        std::wstring full = path.empty() ? std::wstring() : absoluteFilePath(toUtf8(path));
+        return full.empty() ? path : full;
+    };
+    inputFile = toUtf8(resolveArgument(toWide(inputFile)));
+    printPagesDir = resolveArgument(printPagesDir);
+    exportHtmlPath = resolveArgument(exportHtmlPath);
+    exportDocxPath = resolveArgument(exportDocxPath);
+    exportPdfPath = resolveArgument(exportPdfPath);
+    const std::string tutorialFile = toUtf8(resolveArgument(L"syntax.md"));
+
+    // Headless SSH self-test: runs before any window exists and reports to
+    // a file (a GUI process has no console to print to)
+    if (!remoteTestReport.empty()) {
+        parkWorkingDirectory();
+        return runRemoteSelfTest(remoteTestReport);
+    }
+    parkWorkingDirectory();
+
+    // Single instance: a plain file launch joins the existing window as a
+    // new tab (Win11 Notepad model). --new/--cascade windows and the
+    // openInTabs=false setting keep the one-window-per-document behavior.
+    if (!inputFile.empty() && !quickNote && !cascadeWindow &&
+        printPagesDir.empty() && exportHtmlPath.empty() &&
+        exportDocxPath.empty() && exportPdfPath.empty() &&
+        savedSettings.openInTabs) {
+        HWND existing = FindWindowW(L"Tinta", nullptr);
+        if (existing) {
+            // inputFile is absolute by now: the receiving window has its
+            // own working directory
+            COPYDATASTRUCT data;
+            data.dwData = 1;
+            data.cbData = (DWORD)inputFile.size() + 1;
+            data.lpData = (void*)inputFile.c_str();
+            SendMessageW(existing, WM_COPYDATA, 0, (LPARAM)&data);
+            if (IsIconic(existing)) ShowWindow(existing, SW_RESTORE);
+            SetForegroundWindow(existing);
+            return 0;
+        }
+    }
+
+    // Handle /register command
+    if (forceRegister) {
+        if (registerFileAssociation()) {
+            MessageBoxW(nullptr,
+                       tr(app, "fileassoc.done_body"),
+                       tr(app, "fileassoc.done_title"),
+                       MB_OK | MB_ICONINFORMATION);
+            openDefaultAppsSettings();
+        } else {
+            MessageBoxW(nullptr, tr(app, "fileassoc.register_failed_body"),
+                       tr(app, "error.title"), MB_OK | MB_ICONWARNING);
+        }
+        return 0;  // Exit after registering
+    }
+
+    // Ask about file association on first run
+    askAndRegisterFileAssociation(savedSettings);
+
+    if (lightMode) {
+        app.currentThemeIndex = 0;  // Paper (first light theme)
+        app.theme = THEMES[0];
+        app.darkMode = false;
+    }
+
+    // Create window with saved position/size
+    t0 = Clock::now();
+
+    WNDCLASSEXW wc = {};
+    wc.cbSize = sizeof(wc);
+    wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.lpfnWndProc = WndProc;
+    wc.hInstance = hInstance;
+    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wc.hIcon = LoadIconW(hInstance, L"IDI_ICON1");
+    wc.hIconSm = LoadIconW(hInstance, L"IDI_ICON1");
+    wc.lpszClassName = L"Tinta";
+    RegisterClassExW(&wc);
+
+    // Validate the saved window position against the monitors that exist
+    // NOW — a position saved on a since-disconnected screen (docked laptop,
+    // unplugged external monitor) would otherwise restore off-screen (#25)
+    int windowX = savedSettings.windowX;
+    int windowY = savedSettings.windowY;
+    if (windowX != CW_USEDEFAULT && windowY != CW_USEDEFAULT) {
+        RECT saved = { windowX, windowY,
+                       windowX + savedSettings.windowWidth,
+                       windowY + savedSettings.windowHeight };
+        HMONITOR monitor = MonitorFromRect(&saved, MONITOR_DEFAULTTONULL);
+        if (!monitor) {
+            // Fully off every live monitor: clamp into the nearest one
+            monitor = MonitorFromRect(&saved, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO mi = { sizeof(mi) };
+            if (monitor && GetMonitorInfoW(monitor, &mi)) {
+                const RECT& wa = mi.rcWork;
+                int width = std::min<int>(savedSettings.windowWidth, wa.right - wa.left);
+                int height = std::min<int>(savedSettings.windowHeight, wa.bottom - wa.top);
+                windowX = std::max<int>(wa.left, std::min<int>(windowX, wa.right - width));
+                windowY = std::max<int>(wa.top, std::min<int>(windowY, wa.bottom - height));
+            } else {
+                windowX = CW_USEDEFAULT;
+                windowY = CW_USEDEFAULT;
+            }
+        }
+    }
+
+    // A window spawned for a newly created document steps down-right from
+    // the saved position so it does not cover the window that spawned it
+    if (hasPos) {
+        // Tab drag-out: appear under the drop point
+        windowX = posX;
+        windowY = posY;
+    } else if (cascadeWindow && windowX != CW_USEDEFAULT && windowY != CW_USEDEFAULT) {
+        windowX += 40;
+        windowY += 40;
+    }
+
+    // Only the primary window persists and restores the tab session;
+    // deliberate offshoots (new-note windows, drag-outs) are satellites
+    app.sessionOwner = !cascadeWindow && !quickNote;
+
+    app.hwnd = CreateWindowExW(
+        WS_EX_ACCEPTFILES,
+        L"Tinta",
+        L"Tinta",
+        WS_OVERLAPPEDWINDOW,
+        windowX, windowY,
+        savedSettings.windowWidth, savedSettings.windowHeight,
+        nullptr, nullptr, hInstance, nullptr
+    );
+
+    app.metrics.windowInitUs = usElapsed(t0);
+
+    // Get DPI using per-monitor aware API
+    app.contentScale = GetDpiForWindow(app.hwnd) / 96.0f;
+
+    // Theme the native title bar before the window is ever shown
+    applyWindowChrome(app);
+
+    // Apply the custom-caption frame (WM_NCCALCSIZE) to the fresh window
+    SetWindowPos(app.hwnd, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                     SWP_FRAMECHANGED);
+
+    // Initialize D2D
+    if (!initD2D(app)) {
+        MessageBoxW(nullptr, tr(app, "error.d2d_init_failed"),
+                   tr(app, "error.title"), MB_OK);
+        return 1;
+    }
+
+    // Create text formats and typography
+    updateTextFormats(app);
+    createTypography(app);
+
+    // Get window size
+    RECT rc;
+    GetClientRect(app.hwnd, &rc);
+    app.width = rc.right - rc.left;
+    app.height = rc.bottom - rc.top;
+
+    // Create render target
+    t0 = Clock::now();
+    if (!createRenderTarget(app)) {
+        MessageBoxW(nullptr, tr(app, "error.render_target_failed"),
+                   tr(app, "error.title"), MB_OK);
+        return 1;
+    }
+    app.metrics.renderTargetUs = usElapsed(t0);
+
+    // Load document
+    t0 = Clock::now();
+
+    auto loadDocumentContent = [&](const std::string& content, std::string_view path) {
+        auto result = parseDocument(app.parser, content, path);
+        if (result.success) {
+            app.root = result.root;
+            app.parseTimeUs = result.parseTimeUs;
+            // Review annotations derive from the raw source (#126)
+            app.sourceText = content;
+            for (const auto& e : app.root->children)
+                if (e->type == ElementType::Properties) observeFrontmatter(app, e->properties);
+            annotationsParseSource(app);
+        }
+        return result.success;
+    };
+
+    auto loadFile = [&](const std::string& path) -> bool {
+        // Use wide string path for ifstream to support non-ASCII paths (MSVC extension)
+        std::wstring widePath = toWide(path);
+        std::ifstream file(widePath.c_str());
+        if (!file) return false;
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        return loadDocumentContent(buffer.str(), path);
+    };
+
+    // Last session's tabs come back on plain launches (files that vanished
+    // from disk in the meantime are dropped). With "Open files in tabs"
+    // off the session stays parked: one window, one document — a file
+    // launch must not drag the previous session in as extra tabs (#147)
+    bool restoreSession = !quickNote && !cascadeWindow && !startInEditMode &&
+                          printPagesDir.empty() && savedSettings.openInTabs &&
+                          !savedSettings.sessionTabs.empty();
+    std::vector<std::string> sessionPaths;
+    int sessionActive = 0;
+    if (restoreSession) {
+        for (size_t i = 0; i < savedSettings.sessionTabs.size(); i++) {
+            const auto& path = savedSettings.sessionTabs[i];
+            // Remote tabs have no local file to stat; they restore and
+            // fetch again when activated
+            if (remotePathIs(path) ||
+                GetFileAttributesW(toWide(path).c_str()) !=
+                    INVALID_FILE_ATTRIBUTES) {
+                // The active slot follows its path through the filtering
+                if ((int)i == savedSettings.sessionActive) {
+                    sessionActive = (int)sessionPaths.size();
+                }
+                sessionPaths.push_back(path);
+            }
+        }
+        if (sessionPaths.empty()) restoreSession = false;
+    }
+
+    // Windows that come up with nothing to show land on the start page
+    // (design t7) instead of the old tutorial document: an empty
+    // document is all it takes, the launcher is the empty state
+    auto showStartPage = [&]() { loadDocumentContent(std::string(), {}); };
+
+    if (quickNote) {
+        // Untitled quick note: an empty document, no backing file
+        loadDocumentContent(std::string(), {});
+    } else if (!inputFile.empty()) {
+        if (loadFile(inputFile)) {
+            app.currentFile = inputFile;
+            app.focusMermaidOnNextLayout = isMermaidDocumentPath(inputFile);
+            persistRecentFile(app.currentFile);
+        } else {
+            showStartPage();
+        }
+    } else if (restoreSession) {
+        // No file argument: reopen where the last session left off. A
+        // remote tab is fetched again in the background; the placeholder
+        // keeps the tab identity until its bytes land.
+        const std::string& startPath = sessionPaths[sessionActive];
+        bool started = remotePathIs(startPath)
+                           ? openRemoteDocumentInViewer(app, startPath)
+                           : loadFile(startPath);
+        if (started) {
+            app.currentFile = startPath;
+            app.focusMermaidOnNextLayout = isMermaidDocumentPath(toWide(startPath));
+        } else {
+            showStartPage();
+        }
+    } else {
+        // Try syntax.md in the launch folder
+        if (loadFile(tutorialFile)) {
+            app.currentFile = tutorialFile;
+        } else {
+            showStartPage();
+        }
+    }
+
+    app.metrics.fileLoadUs = usElapsed(t0);
+
+    // Resume the saved reading position (#77); new-file windows start in the
+    // editor at the top instead
+    if (!startInEditMode && !app.currentFile.empty()) {
+        app.pendingScrollRestore = findReadingPosition(savedSettings, app.currentFile);
+        // Per-document zoom overrides the global one for known documents
+        float docZoom = findReadingZoom(savedSettings, app.currentFile);
+        if (docZoom > 0.0f && fabsf(docZoom - app.zoomFactor) > 0.01f) {
+            app.zoomFactor = docZoom;
+            app.appliedZoomFactor = docZoom;
+            updateTextFormats(app);
+            app.layoutDirty = true;
+        }
+    }
+
+    // Set window title with filename
+    updateWindowTitle(app);
+
+    // The startup document becomes the first (tabless) tab; a restored
+    // session rebuilds the whole row in its saved order
+    if (restoreSession && !app.currentFile.empty()) {
+        tabsSeedSession(app, sessionPaths);
+    } else {
+        tabsInit(app);
+    }
+
+    // Start file watch timer and record initial write time
+    updateFileWriteTime(app);
+    SetTimer(app.hwnd, TIMER_FILE_WATCH, 500, nullptr);
+
+    // Show window (respect saved maximized state)
+    t0 = Clock::now();
+    if (savedSettings.windowMaximized) {
+        ShowWindow(app.hwnd, SW_SHOWMAXIMIZED);
+    } else {
+        ShowWindow(app.hwnd, nCmdShow);
+    }
+    UpdateWindow(app.hwnd);
+    app.metrics.showWindowUs = usElapsed(t0);
+
+    // Draft autosave sweep (crash recovery), and the offer to restore
+    // whatever a crashed instance left behind
+    SetTimer(app.hwnd, TIMER_DRAFT_SAVE, DRAFT_SAVE_INTERVAL_MS, nullptr);
+    draftsScanForRecovery(app);
+
+    app.metrics.totalStartupUs = usElapsed(startupStart);
+
+    // New-file windows open straight into the editor
+    if (quickNote) {
+        enterQuickNoteMode(app);
+    } else if (startInEditMode) {
+        enterEditMode(app);
+    }
+
+    // Debug: rasterize the print pagination to PNGs and exit
+    if (!printPagesDir.empty()) {
+        int pages = printDebugPages(app, printPagesDir);
+        wchar_t msg[64];
+        swprintf_s(msg, L"printpages: %d", pages);
+        OutputDebugStringW(msg);
+        return pages > 0 ? 0 : 1;
+    }
+
+    // Debug: write the HTML export and exit (#export_as harness)
+    if (!exportHtmlPath.empty()) {
+        bool ok = exportHtmlFile(app, exportHtmlPath);
+        return ok ? 0 : 1;
+    }
+    if (!exportDocxPath.empty()) {
+        bool ok = exportDocxFile(app, exportDocxPath);
+        return ok ? 0 : 1;
+    }
+    if (!exportPdfPath.empty()) {
+        bool ok = exportPdfFile(app, exportPdfPath);
+        return ok ? 0 : 1;
+    }
+
+    // Pinned side panels are part of the layout, so they come back on
+    // launch when a document is up (#156). The start page, quick notes,
+    // and --edit launches keep their clean slate; T/B still toggle.
+    if (!app.currentFile.empty() && !app.editMode) {
+        if (app.tocPinned) {
+            app.showToc = true;
+            app.tocAnimation = 1.0f;  // docked: no slide on restore
+            app.tocScroll = 0;
+            app.tocFilter.clear();
+            app.hoveredTocIndex = -1;
+        }
+        if (app.browserPinned) {
+            app.showFolderBrowser = true;
+            app.folderBrowserAnimation = 1.0f;
+            app.folderBrowserPath = getDirectoryFromFile(app.currentFile);
+            populateFolderItems(app);
+        }
+        if (app.tocPinned || app.browserPinned) {
+            InvalidateRect(app.hwnd, nullptr, FALSE);
+        }
+    }
+
+    // First frame is on screen — now pay for the GPU in the background
+    startGpuWarmup();
+
+    // Message loop
+    MSG msg;
+    while (GetMessage(&msg, nullptr, 0, 0)) {
+        if (msg.hwnd == app.hwnd && msg.message == WM_KEYDOWN) {
+            // Give command shortcuts the first chance to consume a key.
+            // Only unconsumed keystrokes generate WM_CHAR; no timed input
+            // suppression is needed when E opens the editor (#195).
+            if (!DispatchMessage(&msg)) TranslateMessage(&msg);
+        } else {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+    }
+
+    g_app = nullptr;
+    return (int)msg.wParam;
+}

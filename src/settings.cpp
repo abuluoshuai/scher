@@ -1,0 +1,742 @@
+#include "settings.h"
+#include "document.h"
+#include "i18n.h"
+
+#include <windows.h>
+#include <shlobj.h>
+#include <shellapi.h>
+#include <appmodel.h>
+#include <cmath>
+#include <fstream>
+#include <string>
+
+static int settingsLanguageIndex(const Settings& settings) {
+    if (settings.language != "auto") {
+        int index = languageIndexById(settings.language);
+        if (index >= 0) return index;
+    }
+    return detectSystemLanguage();
+}
+
+// tintaConfigDir (portable mode #147) lives in config_dir.cpp so test
+// targets can link it without this translation unit.
+
+std::wstring getSettingsPath() {
+    std::wstring dir = tintaConfigDir();
+    if (dir.empty()) return L"";
+    return dir + L"\\settings.ini";
+}
+
+void saveSettings(const Settings& settings) {
+    std::wstring path = getSettingsPath();
+    if (path.empty()) return;
+
+    std::ofstream file(path.c_str());
+    if (!file) return;
+
+    file << "[Settings]\n";
+    file << "themeIndex=" << settings.themeIndex << "\n";
+    file << "zoomFactor=" << settings.zoomFactor << "\n";
+    file << "windowX=" << settings.windowX << "\n";
+    file << "windowY=" << settings.windowY << "\n";
+    file << "windowWidth=" << settings.windowWidth << "\n";
+    file << "windowHeight=" << settings.windowHeight << "\n";
+    file << "windowMaximized=" << (settings.windowMaximized ? 1 : 0) << "\n";
+    file << "hasAskedFileAssociation=" << (settings.hasAskedFileAssociation ? 1 : 0) << "\n";
+    file << "editorShowPreview=" << (settings.editorShowPreview ? 1 : 0) << "\n";
+    file << "editorWordWrap=" << (settings.editorWordWrap ? 1 : 0) << "\n";
+    file << "editHintsShown=" << settings.editHintsShown << "\n";
+    file << "editorAssists=" << (settings.editorAssists ? 1 : 0) << "\n";
+    file << "showWordCount=" << (settings.showWordCount ? 1 : 0) << "\n";
+    file << "closeKeepsDrafts=" << (settings.closeKeepsDrafts ? 1 : 0) << "\n";
+    file << "printMarginMm=" << settings.printMarginMm << "\n";
+    if (!settings.pandocPath.empty()) {
+        file << "pandocPath=" << settings.pandocPath << "\n";
+    }
+    file << "followSystemTheme=" << (settings.followSystemTheme ? 1 : 0) << "\n";
+    file << "lightThemeIndex=" << settings.lightThemeIndex << "\n";
+    file << "darkThemeIndex=" << settings.darkThemeIndex << "\n";
+    file << "folderSearchEnabled=" << (settings.folderSearchEnabled ? 1 : 0) << "\n";
+    file << "tabSearchEnabled=" << (settings.tabSearchEnabled ? 1 : 0) << "\n";
+    file << "browserFocusPath=" << (settings.browserFocusPath ? 1 : 0) << "\n";
+    file << "openInTabs=" << (settings.openInTabs ? 1 : 0) << "\n";
+    file << "readingWidthPct=" << settings.readingWidthPct << "\n";
+    file << "zenWidthPct=" << settings.zenWidthPct << "\n";
+    file << "headingRules=" << (settings.headingRules ? 1 : 0) << "\n";
+    file << "tocOnLeft=" << (settings.tocOnLeft ? 1 : 0) << "\n";
+    file << "tabsOnLeft=" << (settings.tabsOnLeft ? 1 : 0) << "\n";
+    file << "tabsWidth=" << settings.tabsWidth << "\n";
+    file << "tocPinned=" << (settings.tocPinned ? 1 : 0) << "\n";
+    file << "browserPinned=" << (settings.browserPinned ? 1 : 0) << "\n";
+    file << "tocWidth=" << settings.tocWidth << "\n";
+    file << "browserWidth=" << settings.browserWidth << "\n";
+    file << "language=" << settings.language << "\n";
+    file << "keyProfile=" << settings.keyProfile << "\n";
+
+    // Remappable keys ("custom" profile), written with every save so the
+    // section documents itself: change a value, restart Tinta
+    file << "frontmatterShown=" << settings.frontmatter.shown << "\n";
+    file << "frontmatterOther=" << settings.frontmatter.showOther << "\n";
+    for (const auto& rule : settings.frontmatter.rules)
+        file << "frontmatterRule=" << fm::encodeRule(rule) << "\n";
+
+    file << "[Keys]\n";
+    file << "; single letters/digits, Tab, Space, F1-F12, or one character\n";
+    for (int i = 0; i < KEY_ACTION_COUNT; i++) {
+        std::string value = keyIniName({KEY_ACTIONS[i].defaultKey, KEY_ACTIONS[i].isChar});
+        for (const auto& kv : settings.keyOverrides) {
+            if (kv.first == KEY_ACTIONS[i].name) { value = kv.second; break; }
+        }
+        file << KEY_ACTIONS[i].name << "=" << value << "\n";
+    }
+
+    if (!settings.sessionTabs.empty()) {
+        // Open tabs from the last session, restored on the next plain launch
+        file << "[Session]\n";
+        file << "sessionActive=" << settings.sessionActive << "\n";
+        for (const auto& tabPath : settings.sessionTabs) {
+            file << "tab=" << tabPath << "\n";
+        }
+    }
+
+    if (!settings.recentFiles.empty() || !settings.remoteFiles.empty()) {
+        // Recently opened files, most recent first. `recent=` is local,
+        // `remoteRecent=` carries an ssh:// URI; both feed the start page
+        // (local only) and the recent-documents menu.
+        file << "[Recent]\n";
+        for (const auto& recent : settings.recentFiles) {
+            file << "recent=" << recent.when << "|" << recent.path << "\n";
+        }
+        for (const auto& recent : settings.remoteFiles) {
+            file << "remoteRecent=" << recent.when << "|" << recent.path
+                 << "\n";
+        }
+    }
+
+    if (!settings.readingPositions.empty()) {
+        file << "[Positions]\n";
+        for (const auto& pos : settings.readingPositions) {
+            // Windows paths cannot contain '|'; the fields are scrollY,
+            // per-document zoom (0 = none) and reading progress (0..1,
+            // the tab ring) before the path. Older files without the
+            // progress field still parse.
+            file << "pos=" << pos.scrollY << "|" << pos.zoom << "|"
+                 << pos.readProgress << "|" << pos.path << "\n";
+        }
+    }
+}
+
+void applyKeymap(App& app, const Settings& settings) {
+    resolveKeymap(app.keymap, settings.keyProfile, settings.keyOverrides);
+    app.keyProfile = settings.keyProfile;
+}
+
+void rememberReadingPosition(Settings& settings, const std::string& path,
+                             float scrollY, float zoom, float progress) {
+    if (path.empty()) return;
+    auto& list = settings.readingPositions;
+    for (size_t i = 0; i < list.size(); i++) {
+        if (_stricmp(list[i].path.c_str(), path.c_str()) == 0) {
+            if (zoom <= 0.0f) zoom = list[i].zoom;  // keep a known zoom
+            // Progress follows the reader's current position, so a known
+            // value may well be smaller than the stored one; -1 means
+            // "unknown, keep what is on disk"
+            if (progress < 0.0f) progress = list[i].readProgress;
+            list.erase(list.begin() + i);
+            break;
+        }
+    }
+    list.insert(list.begin(), {path, scrollY, zoom, progress});
+    if (list.size() > 50) list.resize(50);
+}
+
+void persistReadingPosition(const std::string& path, float scrollY,
+                            float zoom, float progress) {
+    if (path.empty()) return;
+    Settings settings = loadSettings();
+    rememberReadingPosition(settings, path, scrollY, zoom, progress);
+    saveSettings(settings);
+}
+
+void persistReadProgress(const std::string& path, float progress) {
+    if (path.empty()) return;
+    Settings settings = loadSettings();
+    auto& list = settings.readingPositions;
+    bool found = false;
+    for (size_t i = 0; i < list.size(); i++) {
+        if (_stricmp(list[i].path.c_str(), path.c_str()) == 0) {
+            list[i].readProgress = progress;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        // A tab was marked before its position ever persisted: give it
+        // an entry now; the next real persist fills scrollY and zoom
+        list.insert(list.begin(), {path, 0.0f, 0.0f, progress});
+        if (list.size() > 50) list.resize(50);
+    }
+    saveSettings(settings);
+}
+
+// The editor assists toggle persists immediately so fresh windows pick
+// it up without waiting for this one's exit save
+void persistEditorMode(const App& app) {
+    Settings settings = loadSettings();
+    settings.editorAssists = app.editorAssists;
+    saveSettings(settings);
+}
+
+// The word count (#240) and "Close without asking" (#252) switches
+// persist on their own the moment they change, and the exit save leaves
+// them as on disk: an older window must not write back a value another
+// window changed since
+void persistWordCount(const App& app) {
+    Settings settings = loadSettings();
+    settings.showWordCount = app.showWordCount;
+    saveSettings(settings);
+}
+
+void persistCloseKeepsDrafts(const App& app) {
+    Settings settings = loadSettings();
+    settings.closeKeepsDrafts = app.closeKeepsDrafts;
+    saveSettings(settings);
+}
+
+void persistPrintMargin(const App& app) {
+    Settings settings = loadSettings();
+    settings.printMarginMm = app.printMarginMm;
+    saveSettings(settings);
+}
+
+// The results panel's scope chips (#246) keep their state for the next
+// search and the next window
+void persistSearchScopes(const App& app) {
+    Settings settings = loadSettings();
+    settings.folderSearchEnabled = app.folderSearchEnabled;
+    settings.tabSearchEnabled = app.tabSearchEnabled;
+    saveSettings(settings);
+}
+
+// "Open files in tabs" persists the moment it is toggled: the join-or-
+// spawn decision is made by the NEXT launched process reading
+// settings.ini, so an exit-time save would leave every Explorer open on
+// the old mode until all windows closed (#147 follow-up). The ini is the
+// single source of truth for this flag - the exit save leaves it alone.
+void persistOpenInTabs(const App& app) {
+    Settings settings = loadSettings();
+    settings.openInTabs = app.openInTabs;
+    saveSettings(settings);
+}
+
+// A theme change persists immediately: windows spawned afterwards
+// (quick notes, drag-outs) read settings.ini at startup and would
+// otherwise come up in the look from the previous session
+void persistThemeChoice(const App& app) {
+    Settings settings = loadSettings();
+    settings.themeIndex = app.currentThemeIndex;
+    settings.followSystemTheme = app.followSystemTheme;
+    settings.lightThemeIndex = app.lightThemeIndex;
+    settings.darkThemeIndex = app.darkThemeIndex;
+    saveSettings(settings);
+}
+
+// Start page recents: every successful document open moves (or inserts)
+// its path at the head of the [Recent] list
+void persistRecentFile(const std::string& path) {
+    if (path.empty()) return;
+    Settings settings = loadSettings();
+    auto& list = settings.recentFiles;
+    for (size_t i = 0; i < list.size(); i++) {
+        if (_stricmp(list[i].path.c_str(), path.c_str()) == 0) {
+            list.erase(list.begin() + i);
+            break;
+        }
+    }
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER now;
+    now.LowPart = ft.dwLowDateTime;
+    now.HighPart = ft.dwHighDateTime;
+    list.insert(list.begin(), {now.QuadPart, path});
+    if (list.size() > 60) list.resize(60);
+    saveSettings(settings);
+}
+
+// Remote counterparts: same [Recent] section, ssh:// URIs only
+void persistRemoteFile(const std::string& uri) {
+    if (uri.empty()) return;
+    Settings settings = loadSettings();
+    auto& list = settings.remoteFiles;
+    for (size_t i = 0; i < list.size(); i++) {
+        if (_stricmp(list[i].path.c_str(), uri.c_str()) == 0) {
+            list.erase(list.begin() + i);
+            break;
+        }
+    }
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER now;
+    now.LowPart = ft.dwLowDateTime;
+    now.HighPart = ft.dwHighDateTime;
+    list.insert(list.begin(), {now.QuadPart, uri});
+    if (list.size() > 60) list.resize(60);
+    saveSettings(settings);
+}
+
+void clearRecentFiles() {
+    Settings settings = loadSettings();
+    settings.recentFiles.clear();
+    saveSettings(settings);
+}
+
+float findReadingPosition(const Settings& settings, const std::string& path) {
+    for (const auto& pos : settings.readingPositions) {
+        if (_stricmp(pos.path.c_str(), path.c_str()) == 0) return pos.scrollY;
+    }
+    return -1.0f;
+}
+
+float findReadingZoom(const Settings& settings, const std::string& path) {
+    for (const auto& pos : settings.readingPositions) {
+        if (_stricmp(pos.path.c_str(), path.c_str()) == 0) return pos.zoom;
+    }
+    return 0.0f;
+}
+
+float findReadProgress(const Settings& settings, const std::string& path) {
+    for (const auto& pos : settings.readingPositions) {
+        if (_stricmp(pos.path.c_str(), path.c_str()) == 0)
+            return pos.readProgress;
+    }
+    return 0.0f;
+}
+
+namespace {
+
+// A hand-edited settings.ini must never throw out of loadSettings(): it is
+// called during startup, where an uncaught exception means the window never
+// appears. These read a whole value and fall back to a default otherwise.
+int readSettingInt(const std::string& value, int fallback) {
+    size_t consumed = 0;
+    try {
+        const int number = std::stoi(value, &consumed);
+        return consumed == value.size() ? number : fallback;
+    } catch (const std::exception&) {
+        return fallback;
+    }
+}
+
+float readSettingFloat(const std::string& value, float fallback) {
+    size_t consumed = 0;
+    try {
+        const float number = std::stof(value, &consumed);
+        return consumed == value.size() && std::isfinite(number) ? number
+                                                                 : fallback;
+    } catch (const std::exception&) {
+        return fallback;
+    }
+}
+
+}  // namespace
+
+Settings loadSettings() {
+    Settings settings;
+    std::wstring path = getSettingsPath();
+    if (path.empty()) return settings;
+
+    std::ifstream file(path.c_str());
+    if (!file) return settings;
+
+    bool sawKeyProfile = false, sawFrontmatterRules = false;
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty() || line[0] == '[' || line[0] == ';') continue;
+
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+
+        std::string key = line.substr(0, eq);
+        std::string value = line.substr(eq + 1);
+
+        if (key == "frontmatterShown") {
+            settings.frontmatter.shown = value == "1";
+        } else if (key == "frontmatterOther") {
+            settings.frontmatter.showOther = value == "1";
+        } else if (key == "frontmatterRule") {
+            fm::Rule rule;
+            if (fm::decodeRule(value, rule)) {
+                if (!sawFrontmatterRules) { settings.frontmatter.rules.clear(); sawFrontmatterRules = true; }
+                if (!fm::find(settings.frontmatter, rule.key) && settings.frontmatter.rules.size() < 256)
+                    settings.frontmatter.rules.push_back(std::move(rule));
+            }
+        } else if (key == "themeIndex") {
+            int idx = readSettingInt(value, -1);
+            if (idx >= 0) settings.themeIndex = idx;  // clamped at apply via themeCount()
+        } else if (key == "zoomFactor") {
+            float z = readSettingFloat(value, settings.zoomFactor);
+            if (z >= 0.5f && z <= 3.0f) settings.zoomFactor = z;
+        } else if (key == "windowX") {
+            settings.windowX = readSettingInt(value, settings.windowX);
+        } else if (key == "windowY") {
+            settings.windowY = readSettingInt(value, settings.windowY);
+        } else if (key == "windowWidth") {
+            int w = readSettingInt(value, -1);
+            if (w >= 200) settings.windowWidth = w;
+        } else if (key == "windowHeight") {
+            int h = readSettingInt(value, -1);
+            if (h >= 200) settings.windowHeight = h;
+        } else if (key == "readingWidthPct") {
+            int w = readSettingInt(value, -1);
+            if (w >= 30 && w <= 100) settings.readingWidthPct = w;
+        } else if (key == "zenWidthPct") {
+            int w = readSettingInt(value, -1);
+            if (w >= 30 && w <= 100) settings.zenWidthPct = w;
+        } else if (key == "headingRules") {
+            settings.headingRules = (value == "1");
+        } else if (key == "tocOnLeft") {
+            settings.tocOnLeft = (value == "1");
+        } else if (key == "tabsOnLeft") {
+            settings.tabsOnLeft = (value == "1");
+        } else if (key == "tabsWidth") {
+            try {
+                size_t consumed = 0;
+                const float w = std::stof(value, &consumed);
+                if (consumed == value.size() && std::isfinite(w) &&
+                    w >= 220.0f && w <= 560.0f) settings.tabsWidth = w;
+            } catch (const std::exception&) { /* keep the default */ }
+        } else if (key == "tocPinned") {
+            settings.tocPinned = (value == "1");
+        } else if (key == "browserPinned") {
+            settings.browserPinned = (value == "1");
+        } else if (key == "tocWidth" || key == "browserWidth") {
+            try {
+                size_t consumed = 0;
+                const float width = std::stof(value, &consumed);
+                if (consumed == value.size() && std::isfinite(width) &&
+                    width >= (key == "tocWidth" ? 180.0f : 200.0f) && width <= 4000.0f) {
+                    if (key == "tocWidth") settings.tocWidth = width;
+                    else settings.browserWidth = width;
+                }
+            } catch (const std::exception&) { /* Keep the default for malformed widths. */ }
+        } else if (key == "language") {
+            if (!value.empty()) settings.language = value;  // "auto" or an id
+        } else if (key == "keyProfile") {
+            if (value == "custom" || keyProfileIndexById(value) >= 0) {
+                settings.keyProfile = value;
+                sawKeyProfile = true;
+            }
+        } else if (key == "languageIndex") {
+            // Legacy numeric form from the first i18n build
+            int idx = readSettingInt(value, -1);
+            const char* ids[] = {"en", "zh", "ja", "ko"};
+            settings.language = (idx >= 0 && idx < 4) ? ids[idx] : "auto";
+        } else if (key == "folderSearchEnabled") {
+            settings.folderSearchEnabled = (value == "1");
+        } else if (key == "tabSearchEnabled") {
+            settings.tabSearchEnabled = (value == "1");
+        } else if (key == "browserFocusPath") {
+            settings.browserFocusPath = (value == "1");
+        } else if (key == "openInTabs") {
+            settings.openInTabs = (value == "1");
+        } else if (key == "followSystemTheme") {
+            settings.followSystemTheme = (value == "1");
+        } else if (key == "lightThemeIndex") {
+            int idx = readSettingInt(value, -1);
+            if (idx >= 0) settings.lightThemeIndex = idx;
+        } else if (key == "darkThemeIndex") {
+            int idx = readSettingInt(value, -1);
+            if (idx >= 0) settings.darkThemeIndex = idx;
+        } else if (key == "windowMaximized") {
+            settings.windowMaximized = (value == "1");
+        } else if (key == "hasAskedFileAssociation") {
+            settings.hasAskedFileAssociation = (value == "1");
+        } else if (key == "editorShowPreview") {
+            settings.editorShowPreview = (value == "1");
+        } else if (key == "editorWordWrap") {
+            settings.editorWordWrap = (value == "1");
+        } else if (key == "editHintsShown") {
+            // New-user hint sessions (#245); a malformed count starts over
+            try {
+                size_t consumed = 0;
+                const int shown = std::stoi(value, &consumed);
+                if (consumed == value.size() && shown >= 0) settings.editHintsShown = shown;
+            } catch (const std::exception&) { /* Keep the default. */ }
+        } else if (key == "editorAssists") {
+            settings.editorAssists = (value == "1");
+        } else if (key == "showWordCount") {
+            settings.showWordCount = (value == "1");
+        } else if (key == "closeKeepsDrafts") {
+            settings.closeKeepsDrafts = (value == "1");
+        } else if (key == "printMarginMm") {
+            // Any margin from 5 to 50 mm; the preview offers three (#257)
+            try {
+                size_t consumed = 0;
+                const float mm = std::stof(value, &consumed);
+                if (consumed == value.size() && std::isfinite(mm) && mm >= 5.0f && mm <= 50.0f)
+                    settings.printMarginMm = mm;
+            } catch (const std::exception&) { /* Keep the default for a malformed margin. */ }
+        } else if (key == "pandocPath") {
+            settings.pandocPath = value;
+        } else if (key == "sessionActive") {
+            int idx = readSettingInt(value, -1);
+            if (idx >= 0) settings.sessionActive = idx;
+        } else if (key == "tab") {
+            if (!value.empty() && settings.sessionTabs.size() < 64) {
+                settings.sessionTabs.push_back(value);
+            }
+        } else if (key == "recent" || key == "remoteRecent") {
+            // when(FILETIME)|path, most recent first. Local history keeps
+            // more than the start page shows: the "More" dialog lists all
+            // of it.
+            std::vector<Settings::RecentFile>& list =
+                key == "recent" ? settings.recentFiles : settings.remoteFiles;
+            size_t sep = value.find('|');
+            if (sep != std::string::npos && sep + 1 < value.size() &&
+                list.size() < 60) {
+                try {
+                    unsigned long long when =
+                        std::stoull(value.substr(0, sep));
+                    std::string recentPath = value.substr(sep + 1);
+                    if (!recentPath.empty()) {
+                        list.push_back({when, recentPath});
+                    }
+                } catch (...) {}
+            }
+        } else if (key == "pos") {
+            // scrollY|zoom|progress|path; legacy: scrollY|zoom|path or
+            // scrollY|path (missing tail fields default to 0)
+            size_t sep = value.find('|');
+            if (sep != std::string::npos && sep + 1 < value.size()) {
+                try {
+                    float y = std::stof(value.substr(0, sep));
+                    float zoom = 0.0f;
+                    float progress = 0.0f;
+                    std::string documentPath = value.substr(sep + 1);
+                    size_t sep2 = documentPath.find('|');
+                    if (sep2 != std::string::npos && sep2 + 1 < documentPath.size()) {
+                        zoom = std::stof(documentPath.substr(0, sep2));
+                        documentPath = documentPath.substr(sep2 + 1);
+                        size_t sep3 = documentPath.find('|');
+                        if (sep3 != std::string::npos && sep3 + 1 < documentPath.size()) {
+                            float p = std::stof(documentPath.substr(0, sep3));
+                            if (p >= 0.0f && p <= 1.0f) progress = p;
+                            documentPath = documentPath.substr(sep3 + 1);
+                        }
+                    }
+                    if (y >= 0.0f && !documentPath.empty()) {
+                        settings.readingPositions.push_back({documentPath, y, zoom, progress});
+                    }
+                } catch (...) {}
+            }
+        } else {
+            for (int i = 0; i < KEY_ACTION_COUNT; i++) {
+                if (key == KEY_ACTIONS[i].name) {
+                    settings.keyOverrides.push_back({key, value});
+                    break;
+                }
+            }
+        }
+    }
+    if (settings.readingPositions.size() > 50) settings.readingPositions.resize(50);
+
+    // Migration from pre-profile builds (#77-era [Keys] only): users who
+    // had customized any binding keep exactly what they had via the custom
+    // profile; everyone else gets the Windows profile (':' and '?' stay
+    // hardwired, so nothing they know stops working)
+    if (!sawKeyProfile) {
+        bool customized = false;
+        for (const auto& kv : settings.keyOverrides) {
+            for (int i = 0; i < KEY_ACTION_COUNT; i++) {
+                if (kv.first == KEY_ACTIONS[i].name &&
+                    kv.second != keyIniName({KEY_ACTIONS[i].defaultKey, KEY_ACTIONS[i].isChar})) {
+                    customized = true;
+                    break;
+                }
+            }
+            if (customized) break;
+        }
+        settings.keyProfile = customized ? "custom" : "windows";
+    }
+    return settings;
+}
+
+// Packaged (MSIX/Store) installs declare file associations in AppxManifest.xml;
+// runtime registry writes would only land in the package's virtual registry.
+static bool isRunningPackaged() {
+    UINT32 length = 0;
+    return GetCurrentPackageFullName(&length, nullptr) != APPMODEL_ERROR_NO_PACKAGE;
+}
+
+static bool hasRegisteredFileAssociation(std::wstring_view extension) {
+    HKEY hKey;
+    LONG result = RegOpenKeyExW(
+        HKEY_CURRENT_USER,
+        L"Software\\Tinta\\Capabilities\\FileAssociations",
+        0, KEY_READ, &hKey);
+    if (result != ERROR_SUCCESS) return false;
+
+    wchar_t value[64] = {};
+    DWORD type = 0;
+    DWORD size = sizeof(value);
+    result = RegQueryValueExW(
+        hKey, extension.data(), nullptr, &type,
+        reinterpret_cast<BYTE*>(value), &size);
+    RegCloseKey(hKey);
+    return result == ERROR_SUCCESS &&
+        type == REG_SZ &&
+        wcscmp(value, L"Tinta.MarkdownFile") == 0;
+}
+
+bool registerFileAssociation() {
+    // Get the path to the current executable
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+
+    HKEY hKey;
+    LONG result;
+    const wchar_t* progId = L"Tinta.MarkdownFile";
+
+    // Create ProgID entry in Classes
+    result = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\Tinta.MarkdownFile", 0, nullptr,
+                              REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr);
+    if (result != ERROR_SUCCESS) return false;
+    const wchar_t* desc = L"Tinta Document";
+    RegSetValueExW(hKey, nullptr, 0, REG_SZ, (BYTE*)desc, (DWORD)((wcslen(desc) + 1) * sizeof(wchar_t)));
+    RegCloseKey(hKey);
+
+    // Create DefaultIcon entry
+    result = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\Tinta.MarkdownFile\\DefaultIcon", 0, nullptr,
+                              REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr);
+    if (result != ERROR_SUCCESS) return false;
+    std::wstring iconPath = exePath;
+    iconPath += L",0";
+    RegSetValueExW(hKey, nullptr, 0, REG_SZ, (BYTE*)iconPath.c_str(), (DWORD)((iconPath.length() + 1) * sizeof(wchar_t)));
+    RegCloseKey(hKey);
+
+    // Create shell\open\command entry
+    result = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\Tinta.MarkdownFile\\shell\\open\\command", 0, nullptr,
+                              REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr);
+    if (result != ERROR_SUCCESS) return false;
+    std::wstring command = L"\"";
+    command += exePath;
+    command += L"\" \"%1\"";
+    RegSetValueExW(hKey, nullptr, 0, REG_SZ, (BYTE*)command.c_str(), (DWORD)((command.length() + 1) * sizeof(wchar_t)));
+    RegCloseKey(hKey);
+
+    // Register app capabilities (required for Windows 10/11)
+    result = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Tinta\\Capabilities", 0, nullptr,
+                              REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr);
+    if (result != ERROR_SUCCESS) return false;
+    const wchar_t* appName = L"Tinta";
+    const wchar_t* appDesc = L"A fast, lightweight Markdown and Mermaid reader";
+    RegSetValueExW(hKey, L"ApplicationName", 0, REG_SZ, (BYTE*)appName, (DWORD)((wcslen(appName) + 1) * sizeof(wchar_t)));
+    RegSetValueExW(hKey, L"ApplicationDescription", 0, REG_SZ, (BYTE*)appDesc, (DWORD)((wcslen(appDesc) + 1) * sizeof(wchar_t)));
+    RegCloseKey(hKey);
+
+    // Register file associations in capabilities
+    result = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Tinta\\Capabilities\\FileAssociations", 0, nullptr,
+                              REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr);
+    if (result != ERROR_SUCCESS) return false;
+    for (std::wstring_view extension : DOCUMENT_FILE_EXTENSIONS) {
+        result = RegSetValueExW(
+            hKey, extension.data(), 0, REG_SZ, (BYTE*)progId,
+            (DWORD)((wcslen(progId) + 1) * sizeof(wchar_t)));
+        if (result != ERROR_SUCCESS) {
+            RegCloseKey(hKey);
+            return false;
+        }
+    }
+    RegCloseKey(hKey);
+
+    // Add to RegisteredApplications
+    result = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\RegisteredApplications", 0, nullptr,
+                              REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr);
+    if (result != ERROR_SUCCESS) return false;
+    const wchar_t* capPath = L"Software\\Tinta\\Capabilities";
+    RegSetValueExW(hKey, L"Tinta", 0, REG_SZ, (BYTE*)capPath, (DWORD)((wcslen(capPath) + 1) * sizeof(wchar_t)));
+    RegCloseKey(hKey);
+
+    for (std::wstring_view extension : DOCUMENT_FILE_EXTENSIONS) {
+        std::wstring keyPath = L"Software\\Classes\\";
+        keyPath.append(extension);
+        keyPath += L"\\OpenWithProgids";
+        result = RegCreateKeyExW(
+            HKEY_CURRENT_USER, keyPath.c_str(), 0, nullptr,
+            REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr);
+        if (result != ERROR_SUCCESS) return false;
+        result = RegSetValueExW(hKey, progId, 0, REG_NONE, nullptr, 0);
+        RegCloseKey(hKey);
+        if (result != ERROR_SUCCESS) return false;
+    }
+
+    // Notify shell of the change
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+
+    return true;
+}
+
+void openDefaultAppsSettings() {
+    ShellExecuteW(nullptr, L"open", L"ms-settings:defaultapps", nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+void askAndRegisterFileAssociation(Settings& settings) {
+    int lang = settingsLanguageIndex(settings);
+    if (isRunningPackaged()) {
+        // Store installs: the package manifest already registers the file
+        // types, so only the "make default" choice is missing. Ask once per
+        // install (settings.ini lives in the package's private AppData, so
+        // it resets on uninstall) and deep-link straight to Tinta's page in
+        // Settings > Default apps. Windows 10 ignores the query part and
+        // opens the general Default Apps page instead.
+        if (settings.hasAskedFileAssociation) return;
+        int result = MessageBoxW(
+            nullptr,
+            tr(lang, "fileassoc.packaged.ask_body"),
+            tr(lang, "fileassoc.packaged.title"),
+            MB_YESNO | MB_ICONQUESTION);
+        if (result == IDYES) {
+            ShellExecuteW(nullptr, L"open",
+                L"ms-settings:defaultapps?registeredAppUser=Tinta%20Markdown%20Viewer",
+                nullptr, nullptr, SW_SHOWNORMAL);
+        }
+        settings.hasAskedFileAssociation = true;
+        saveSettings(settings);
+        return;
+    }
+    if (settings.hasAskedFileAssociation) {
+        if (hasRegisteredFileAssociation(L".md") &&
+            !hasRegisteredFileAssociation(L".mmd") &&
+            !registerFileAssociation()) {
+            MessageBoxW(
+                nullptr,
+                tr(lang, "fileassoc.add_mmd_failed_body"),
+                tr(lang, "fileassoc.title"),
+                MB_OK | MB_ICONWARNING);
+        }
+        return;
+    }
+
+    int result = MessageBoxW(
+        nullptr,
+        tr(lang, "fileassoc.ask_body"),
+        tr(lang, "fileassoc.title"),
+        MB_YESNO | MB_ICONQUESTION
+    );
+
+    if (result == IDYES) {
+        if (registerFileAssociation()) {
+            MessageBoxW(nullptr,
+                       tr(lang, "fileassoc.done_body"),
+                       tr(lang, "fileassoc.done_title"),
+                       MB_OK | MB_ICONINFORMATION);
+            openDefaultAppsSettings();
+        } else {
+            MessageBoxW(nullptr, tr(lang, "fileassoc.register_failed_body"),
+                       tr(lang, "error.title"), MB_OK | MB_ICONWARNING);
+        }
+    }
+
+    settings.hasAskedFileAssociation = true;
+    saveSettings(settings);
+}

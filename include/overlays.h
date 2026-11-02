@@ -1,0 +1,169 @@
+#ifndef TINTA_OVERLAYS_H
+#define TINTA_OVERLAYS_H
+
+#include "app.h"
+
+void renderSearchOverlay(App& app);
+void renderFolderBrowser(App& app);
+// Folder-browser item under a client point (-1 = none); shares the
+// renderer's geometry so click handling never trusts stale hover state
+int folderItemIndexAt(const App& app, float x, float y);
+void renderToc(App& app);
+void renderThemeChooser(App& app);
+// Chooser grid geometry, shared between render and hit-testing: rows in the
+// taller column (never below the built-in 5), and a theme's cell position
+// (light themes fill the left column top-down, dark the right)
+int themeChooserRows();
+void themeChooserCell(int themeIndex, int& col, int& row);
+void renderHelpOverlay(App& app);
+// Full-frame print preview; render() short-circuits to this while it is open
+void renderPrintPreview(App& app);
+
+// Settings overlay (Ctrl+,). Render stores (rect, action) pairs in
+// app.settingsHits; handleMouseUp resolves them against these ids.
+enum SettingsAction {
+    SET_NONE = 0,
+    SET_SECTION_GENERAL, SET_SECTION_APPEARANCE, SET_SECTION_EDITOR, SET_SECTION_FRONTMATTER,
+    SET_TOGGLE_FOLLOW, SET_TOGGLE_FOLDERSEARCH, SET_TOGGLE_BROWSEFOCUS,
+    SET_TOGGLE_OPENTABS, SET_TOGGLE_HEADRULES,
+    SET_TOGGLE_WRAP, SET_TOGGLE_PREVIEW, SET_TOGGLE_ASSISTS,
+    SET_TOGGLE_WORDCOUNT, SET_TOGGLE_CLOSE_DRAFTS,
+    SET_LOCATE_PANDOC,
+    SET_SLIDER_READING, SET_SLIDER_ZEN,
+    SET_OPEN_THEMES, SET_NEW_THEME, SET_EDIT_THEME,
+    SET_OPEN_INI, SET_OPEN_THEMES_INI,
+    SET_TOC_LEFT, SET_TOC_RIGHT,
+    SET_TABS_TOP, SET_TABS_LEFT,
+    SET_LANG_DROPDOWN, SET_OPEN_LANGS_INI,
+    SET_KEYS_DROPDOWN, SET_EDIT_KEYS,
+    SET_CLOSE,
+    // Language picks encode as SET_LANG_PICK_BASE + i: 0 = Auto, then the
+    // registry languages in order (the list is dynamic via languages.ini)
+    SET_LANG_PICK_BASE = 1000,
+    // Shortcut profile picks: SET_KEYS_PICK_BASE + profile index, with
+    // KEY_PROFILE_COUNT meaning the custom [Keys] profile
+    SET_KEYS_PICK_BASE = 2000,
+};
+// TOC panel X for the configured side at the current animation state;
+// geometry shared between render and the input hit tests
+float tocPanelX(const App& app, float panelWidth);
+// Heading index under a point in the floating Contents card, or -1 -
+// clicks hit-test their own coordinates (#114 pattern)
+int tocItemIndexAt(App& app, float x, float y);
+// The row viewport and indentation are shared with wheel handling and tests.
+D2D1_RECT_F tocListRect(const App& app);
+float tocHeadingIndent(const App& app, int level);
+float tocMaxScroll(const App& app);
+
+// Shared geometry for the floating file-browser card (t13 design 13b):
+// one source of truth for render, cursor, and click hit-tests
+struct FolderBrowserMetrics {
+    float panelX = 0, panelWidth = 0;              // slide envelope
+    float cardLeft = 0, cardRight = 0, cardTop = 0, cardBottom = 0;
+    float headerY = 0, headerH = 0;                // breadcrumb row
+    float pinBtnX = 0, folderBtnX = 0, fileBtnX = 0, btnY = 0, btnSize = 0;
+    float listStartY = 0, listBottom = 0;          // scrolled group area
+    float itemHeight = 0, labelH = 0;              // row + section label
+    float namingOffset = 0;                        // pinned naming row
+    int dirCount = 0;                              // leading directory items
+    bool hasDirs = false, hasFiles = false;
+};
+FolderBrowserMetrics folderBrowserMetrics(const App& app);
+// Top edge of item i inside the scrolled content (labels included),
+// relative to the content origin (add listStartY + namingOffset - scroll)
+float folderItemContentY(const FolderBrowserMetrics& g, int index);
+void renderSettingsOverlay(App& app);
+D2D1_RECT_F settingsPanelRect(const App& app);
+D2D1_RECT_F settingsCloseButtonRect(const App& app);
+
+// Theme editor ("+ New" in settings). Font-list entries encode their
+// absolute family index as TE_FONT_BASE + i; everything else stays < 100.
+enum ThemeEditorAction {
+    TE_NONE = 0,
+    TE_FIELD_BG, TE_FIELD_TEXT, TE_FIELD_HEADING, TE_FIELD_LINK,
+    TE_FIELD_ACCENT, TE_FIELD_CODEBG,   // order matches themeEditorHex[0..5]
+    TE_FIELD_H1, TE_FIELD_H2, TE_FIELD_H3, TE_FIELD_H4, TE_FIELD_H5, TE_FIELD_H6,
+    TE_FIELD_HIGHLIGHT_BG, TE_FIELD_HIGHLIGHT_TEXT,
+    TE_FIELD_NAME,
+    TE_BASE_PREV, TE_BASE_NEXT,
+    TE_DARK, TE_SAVE, TE_CANCEL, TE_OPEN_INI, TE_HEADINGS,
+    TE_FONT_BASE = 100,
+};
+void renderThemeEditor(App& app);
+void renderShortcutEditor(App& app);
+void renderConfirmExitDialog(App& app);
+void renderCreateRefDialog(App& app);
+
+// Right-click context menu: theme-drawn like the other overlays.
+// Item indices are shared between rendering and input handling.
+enum ContextMenuItem {
+    CTX_COPY = 0,
+    CTX_SELECT_ALL,
+    CTX_ANNOTATE,
+    CTX_NEW,
+    CTX_PRINT,
+    CTX_EXPORT,
+    CTX_EDIT,
+    CTX_SEARCH,
+    CTX_TOC,
+    CTX_BROWSE,
+    CTX_REMOTE,
+    CTX_REVEAL,
+    CTX_THEME,
+    CTX_SETTINGS,
+    CTX_HELP,
+    CTX_QUICK_NOTE,
+    CTX_OPEN,
+    CTX_SAVE,
+    CTX_SAVE_AS,
+    CTX_EXIT,
+    CTX_COPY_PATH,
+    CTX_ITEM_COUNT
+};
+struct ContextMenuEntry {
+    int action;
+    const char* key;
+    const wchar_t* shortcut;
+    bool separatorAfter;
+};
+const std::vector<ContextMenuEntry>& contextMenuEntries(const App& app);
+float contextMenuItemHeight(const App& app);
+float contextMenuSeparatorHeight(const App& app);
+float contextMenuPadding(const App& app);
+float contextMenuWidth(const App& app);
+float contextMenuHeight(const App& app);
+float contextMenuItemTop(const App& app, int row);
+int nextContextMenuItem(const App& app, int current, int direction);
+bool updateContextMenuHover(App& app, float x, float y, bool mouseMoved);
+void closeContextMenu(App& app);
+// The same icon cell is clickable in the caption and the editor tool rail.
+D2D1_RECT_F appMenuButtonRect(const App& app);
+bool appMenuButtonAt(const App& app, float x, float y);
+bool appMenuAvailable(const App& app);
+void renderAppMenuButtonBackground(App& app);
+void renderContextMenu(App& app);
+
+// Hovering a local .md link for a beat previews the target's first lines
+void renderLinkPeek(App& app);
+
+// Image lightbox (click an inline image)
+void openLightbox(App& app, ID2D1Bitmap* bitmap);
+void closeLightbox(App& app);
+void renderLightbox(App& app);
+// Where the image currently draws, in screen coordinates
+D2D1_RECT_F lightboxImageRect(const App& app);
+
+// Floating-panel language shared with the search results panel (#246)
+D2D1_COLOR_F promptChipSurface(const App& app);
+float promptKeycap(App& app, const wchar_t* label, float rightX, float cy);
+void panelFooterText(App& app, const wchar_t* text, const D2D1_RECT_F& rect);
+// The search bar's rect once slid in, and its results-panel button
+D2D1_RECT_F searchBarRect(const App& app);
+D2D1_RECT_F searchResultsButtonRect(const App& app);
+// Opens at (x, y) client coordinates, clamped so the menu stays on screen
+void openContextMenu(App& app, float x, float y, bool application = false);
+// Item index under the point, or -1 (separators and gaps count as none)
+int contextMenuItemAt(const App& app, float x, float y);
+bool contextMenuItemEnabled(const App& app, int item);
+
+#endif // TINTA_OVERLAYS_H

@@ -1,0 +1,475 @@
+cmake_minimum_required(VERSION 3.15)
+project(tinta VERSION 1.0.0 LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_C_STANDARD 11)
+
+include(CTest)
+
+# Build type
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# Compiler flags
+if(MSVC)
+    add_compile_options(/W4)
+    add_compile_options($<$<CONFIG:Release>:/O2>)
+    add_compile_definitions(NOMINMAX _CRT_SECURE_NO_WARNINGS)
+    # Static CRT: the exe must run on clean Windows installs without the
+    # VC++ redistributable (costs ~250 KB, keeps the single-file promise)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
+# --- MinGW compatibility -----------------------------------------------------
+# The bundled mingw-w64 (11.0.1) ships Direct2D 1.0/1.1 only; render.cpp needs
+# the Direct2D 1.2/1.3 + SVG interfaces. Vendored upstream mingw-w64 headers are
+# placed first on the search path to fill the gap. MSVC/WinSDK has them natively.
+if(MINGW)
+    include_directories(BEFORE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mingw-d2d1)
+    # Booting with _WIN32_WINNT=0x0A00 alone maps NTDDI_VERSION to plain
+    # NTDDI_WIN10, which hides every Direct2D 1.3 / SVG declaration behind
+    # "#if NTDDI_VERSION >= NTDDI_WIN10_RS2". Pin the SDK level explicitly
+    # (Windows 10 1703, the same baseline the SVG renderer documents).
+    add_compile_definitions(NTDDI_VERSION=0x0A000003 _WIN32_WINNT=0x0A00 WINVER=0x0A00)
+endif()
+
+# MD4C markdown parser
+include(FetchContent)
+FetchContent_Declare(
+    md4c
+    GIT_REPOSITORY https://github.com/mity/md4c.git
+    GIT_TAG 729e6b8b320caa96328968ab27d7db2235e4fb47  # release-0.5.2, pinned by commit
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(md4c)
+
+# Source files
+set(SOURCES
+    src/main_d2d.cpp
+    src/markdown.cpp src/footnotes.cpp
+    src/themes.cpp
+    src/settings.cpp
+    src/keymap.cpp
+    src/config_dir.cpp
+    src/signals.cpp
+    src/tableedit.cpp
+    src/d2d_init.cpp
+    src/syntax.cpp
+    src/syntax_extended.cpp
+    src/utils.cpp
+    src/search.cpp
+    src/search_input.cpp
+    src/search_panel.cpp
+    src/render.cpp
+    src/image_loader.cpp
+    src/file_utils.cpp
+    src/overlays.cpp
+    src/frontmatter_ui.cpp
+    src/sidepanels.cpp
+    src/context_menu.cpp
+    src/input.cpp
+    src/remote.cpp
+    src/remote_ui.cpp
+    src/editor.cpp
+    src/mermaid.cpp
+    src/mermaid_ext.cpp
+    src/mermaid_seq.cpp
+    src/mermaid_pie.cpp
+    src/mermaid_uml.cpp
+    src/mermaid_git.cpp
+    src/mermaid_gantt.cpp
+    src/mermaid_charts.cpp
+    src/mermaid_narrative.cpp
+    src/mermaid_grid.cpp
+    src/mermaid_charts2.cpp
+    src/mermaid_block.cpp
+    src/mermaid_c4.cpp
+    src/document.cpp src/frontmatter.cpp
+    src/inline_style.cpp
+    src/print.cpp
+    src/i18n.cpp
+    src/selection.cpp
+    src/math_render.cpp
+    src/math_parser.cpp
+    src/math_macros.cpp
+    src/tabs.cpp
+    src/export_html.cpp
+    src/export_docx.cpp
+    src/annotations.cpp
+    src/drafts.cpp
+    src/startpage.cpp
+    src/editrail.cpp
+    src/pandoc.cpp
+    src/wordcount.cpp
+)
+
+set(HEADERS
+    include/markdown.h
+    include/types.h
+    include/app.h
+    include/settings.h
+    include/keymap.h
+    include/d2d_init.h
+    include/syntax.h
+    include/utils.h
+    include/search.h
+    include/search_panel.h
+    include/render.h
+    include/image_loader.h
+    include/file_utils.h
+    include/overlays.h
+    include/input.h
+    include/editor.h
+    include/mermaid.h
+    include/mermaid_ext.h
+    include/document.h
+    include/inline_style.h
+    include/print.h
+    include/i18n.h
+    include/selection.h
+    include/math_render.h
+    include/wordcount.h
+)
+
+# Windows resource file (icon)
+set(RESOURCES
+    resources/tinta.rc
+)
+
+# Main executable
+add_executable(tinta WIN32 ${SOURCES} ${HEADERS} ${RESOURCES})
+
+target_include_directories(tinta PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${md4c_SOURCE_DIR}/src
+)
+
+target_link_libraries(tinta PRIVATE
+    md4c
+    d2d1
+    dwrite
+    shell32
+    windowscodecs
+    urlmon
+    ole32
+    imm32
+    d3d11
+    dwmapi
+    comdlg32
+    shlwapi
+    winspool
+)
+
+# MiniDumpWriteDump comes from dbghelp; MSVC picks it up from the
+# "#pragma comment(lib, ...)" line in main_d2d.cpp, GCC does not.
+if(MINGW)
+    target_link_libraries(tinta PRIVATE dbghelp)
+    # Upstream ships one self-contained exe (the MSVC build links the CRT
+    # statically). Fold the MinGW runtime in too, so the result does not need
+    # libstdc++-6.dll / libgcc_s_seh-1.dll sitting next to it.
+    target_link_options(tinta PRIVATE -static)
+    # MinGW defaults to subsystem 5.02 (XP); match the MSVC build's 6.1 so
+    # Windows does not hand the process its legacy compatibility shims.
+    target_link_options(tinta PRIVATE
+        -Wl,--major-subsystem-version,6 -Wl,--minor-subsystem-version,1)
+endif()
+
+target_compile_definitions(tinta PRIVATE UNICODE _UNICODE
+    TINTA_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+    TINTA_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+    TINTA_VERSION_PATCH=${PROJECT_VERSION_PATCH})
+
+if(BUILD_TESTING)
+    add_executable(keymap_tests tests/keymap_tests.cpp src/keymap.cpp)
+    target_include_directories(keymap_tests PRIVATE include)
+    add_test(NAME keymap COMMAND keymap_tests)
+
+    # SSH remote layer: URI helpers, ~/.ssh/config parsing, the content
+    # cache and the reading-position merge rules
+    # (the full source set minus the entry point: this target sits before
+    # INPUT_TEST_SOURCES is defined)
+    set(REMOTE_TEST_SOURCES ${SOURCES})
+    list(REMOVE_ITEM REMOTE_TEST_SOURCES src/main_d2d.cpp)
+    add_executable(fake_ssh tools/mingw-port/fake_ssh.cpp)
+    # The test double is spawned by tinta.exe, whose PATH may not include the
+    # MinGW bin directory: a dynamic libstdc++/libgcc makes CreateProcess fail
+    # with exit 127 ("ssh failed") on machines without the toolchain on PATH.
+    target_link_options(fake_ssh PRIVATE -static)
+    add_executable(remote_tests tests/remote_tests.cpp tests/remote_process_tests.cpp ${REMOTE_TEST_SOURCES})
+    target_include_directories(remote_tests PRIVATE include ${md4c_SOURCE_DIR}/src)
+    target_link_libraries(remote_tests PRIVATE $<TARGET_PROPERTY:tinta,LINK_LIBRARIES>)
+    target_compile_definitions(remote_tests PRIVATE $<TARGET_PROPERTY:tinta,COMPILE_DEFINITIONS>
+        REMOTE_FAKE_SSH_EXE="$<TARGET_FILE:fake_ssh>")
+    add_dependencies(remote_tests fake_ssh)
+    add_test(NAME remote_layer COMMAND remote_tests)
+
+    # Exercise the real input handlers and editor with a message-only test
+    # window, including layout-dependent character sequences (#195).
+    set(INPUT_TEST_SOURCES ${SOURCES})
+    list(REMOVE_ITEM INPUT_TEST_SOURCES src/main_d2d.cpp)
+    add_executable(input_tests tests/input_tests.cpp tests/table_input_tests.cpp tests/docked_preview_tests.cpp tests/table_layout_tests.cpp tests/window_drag_tests.cpp tests/tab_drop_tests.cpp tests/tab_hover_card_tests.cpp tests/search_panel_tests.cpp tests/superscript_tests.cpp tests/sidepanel_tests.cpp tests/image_tests.cpp tests/search_input_tests.cpp tests/wrapped_cursor_tests.cpp tests/file_fragment_tests.cpp tests/editor_context_tests.cpp tests/editor_features_tests.cpp tests/ui_font_tests.cpp tests/print_export_tests.cpp tests/settings_tests.cpp tests/utils_tests.cpp ${INPUT_TEST_SOURCES})
+    target_include_directories(input_tests PRIVATE include ${md4c_SOURCE_DIR}/src)
+    target_link_libraries(input_tests PRIVATE $<TARGET_PROPERTY:tinta,LINK_LIBRARIES>)
+    target_compile_definitions(input_tests PRIVATE $<TARGET_PROPERTY:tinta,COMPILE_DEFINITIONS>
+        TINTA_SHORTCUT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/shortcuts-layouts.md"
+        TINTA_TAB_DROP_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/tab-drop-position.md"
+        TINTA_TAB_HOVER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/tab-hover-card"
+        TINTA_SEARCH_PANEL_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/search-panel"
+        TINTA_SUPERSCRIPT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/superscript-subscript.md"
+        TINTA_PANEL_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/toc-browser-resize.md"
+        TINTA_IMAGE_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/image-cache-large.md"
+        TINTA_FIND_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/find-table-focus.md"
+        TINTA_WRAP_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/wrapped-cursor-selection.md"
+        TINTA_FRAGMENT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/file-fragments/index.md"
+        TINTA_CONTEXT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/editor-context-selection.md"
+        TINTA_MULTICURSOR_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/editor-multicursor-251.md"
+        TINTA_PRINT_EXPORT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/print-word-export-256.md"
+        TINTA_HTML_EXPORT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/html-export-rich.md"
+        TINTA_PRINT_EXPORT_THEMES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/print-word-export-themes.ini")
+    add_test(NAME editor_features COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/editor-feature-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_editor_feature_tests.cmake)
+    add_test(NAME ui_font_language COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/ui-font-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_ui_font_tests.cmake)
+    add_test(NAME print_and_word_export COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/print-export-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_print_export_tests.cmake)
+    add_test(NAME editor_context_selection COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/editor-context-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_editor_context_tests.cmake)
+    add_test(NAME file_fragment_navigation COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/file-fragment-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_file_fragment_tests.cmake)
+    add_test(NAME wrapped_cursor_navigation COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/wrapped-cursor-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_wrapped_cursor_tests.cmake)
+    add_test(NAME search_input_focus COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/search-input-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_search_input_tests.cmake)
+    add_test(NAME text_helpers COMMAND input_tests --utils-tests)
+    add_test(NAME settings_persistence COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/settings-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_settings_tests.cmake)
+    add_test(NAME image_cache_and_decode COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/image-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_image_tests.cmake)
+    add_test(NAME input_shortcuts COMMAND input_tests)
+    add_test(NAME table_and_modifier_input COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/table-input-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_table_input_tests.cmake)
+    add_test(NAME docked_preview_and_hints COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/docked-preview-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_docked_preview_tests.cmake)
+    add_test(NAME wide_table_layout COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/table-layout-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_table_layout_tests.cmake)
+    add_test(NAME window_drag_and_title_space COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/window-drag-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_window_drag_tests.cmake)
+    add_test(NAME contents_and_panel_resize COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sidepanel-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_sidepanel_tests.cmake)
+    add_test(NAME superscript_and_learn COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/superscript-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_superscript_tests.cmake)
+    add_test(NAME tab_drop_position COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/tab-drop-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_tab_drop_tests.cmake)
+    add_test(NAME tab_hover_card COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/tab-hover-card-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_tab_hover_card_tests.cmake)
+    add_test(NAME search_results_panel COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:input_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/search-panel-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_search_panel_tests.cmake)
+
+    add_executable(file_path_tests tests/file_path_tests.cpp ${INPUT_TEST_SOURCES})
+    target_include_directories(file_path_tests PRIVATE include ${md4c_SOURCE_DIR}/src)
+    target_link_libraries(file_path_tests PRIVATE $<TARGET_PROPERTY:tinta,LINK_LIBRARIES>)
+    target_compile_definitions(file_path_tests PRIVATE $<TARGET_PROPERTY:tinta,COMPILE_DEFINITIONS>)
+    add_test(NAME copy_file_path COMMAND file_path_tests)
+
+    add_executable(code_block_layout_tests tests/code_block_layout_tests.cpp ${INPUT_TEST_SOURCES})
+    target_include_directories(code_block_layout_tests PRIVATE include ${md4c_SOURCE_DIR}/src)
+    target_link_libraries(code_block_layout_tests PRIVATE $<TARGET_PROPERTY:tinta,LINK_LIBRARIES>)
+    target_compile_definitions(code_block_layout_tests PRIVATE $<TARGET_PROPERTY:tinta,COMPILE_DEFINITIONS>
+        TINTA_CODE_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/code-block-spacing.md")
+    add_test(NAME code_block_layout COMMAND code_block_layout_tests)
+
+    add_executable(syntax_tests tests/syntax_tests.cpp ${INPUT_TEST_SOURCES})
+    target_include_directories(syntax_tests PRIVATE include ${md4c_SOURCE_DIR}/src)
+    target_link_libraries(syntax_tests PRIVATE $<TARGET_PROPERTY:tinta,LINK_LIBRARIES>)
+    target_compile_definitions(syntax_tests PRIVATE $<TARGET_PROPERTY:tinta,COMPILE_DEFINITIONS>
+        TINTA_SYNTAX_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+    add_test(NAME syntax_highlighting COMMAND syntax_tests)
+
+    add_executable(frontmatter_tests tests/frontmatter_tests.cpp ${INPUT_TEST_SOURCES})
+    target_include_directories(frontmatter_tests PRIVATE include ${md4c_SOURCE_DIR}/src)
+    target_link_libraries(frontmatter_tests PRIVATE $<TARGET_PROPERTY:tinta,LINK_LIBRARIES>)
+    target_compile_definitions(frontmatter_tests PRIVATE $<TARGET_PROPERTY:tinta,COMPILE_DEFINITIONS>
+        TINTA_FRONTMATTER_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+    add_test(NAME frontmatter COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:frontmatter_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/frontmatter-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_portable_test.cmake)
+
+    add_executable(footnote_tests tests/footnote_tests.cpp ${INPUT_TEST_SOURCES})
+    target_include_directories(footnote_tests PRIVATE include ${md4c_SOURCE_DIR}/src)
+    target_link_libraries(footnote_tests PRIVATE $<TARGET_PROPERTY:tinta,LINK_LIBRARIES>)
+    target_compile_definitions(footnote_tests PRIVATE $<TARGET_PROPERTY:tinta,COMPILE_DEFINITIONS>
+        TINTA_FOOTNOTE_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/footnotes.md")
+    add_test(NAME footnotes COMMAND footnote_tests)
+
+    add_executable(blockquote_layout_tests tests/blockquote_layout_tests.cpp ${INPUT_TEST_SOURCES})
+    target_include_directories(blockquote_layout_tests PRIVATE include ${md4c_SOURCE_DIR}/src)
+    target_link_libraries(blockquote_layout_tests PRIVATE $<TARGET_PROPERTY:tinta,LINK_LIBRARIES>)
+    target_compile_definitions(blockquote_layout_tests PRIVATE $<TARGET_PROPERTY:tinta,COMPILE_DEFINITIONS>
+        TINTA_QUOTE_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/blockquote-spacing.md")
+    add_test(NAME blockquote_layout COMMAND blockquote_layout_tests)
+
+    add_executable(theme_tests tests/theme_tests.cpp tests/theme_colour_tests.cpp ${INPUT_TEST_SOURCES})
+    target_include_directories(theme_tests PRIVATE include ${md4c_SOURCE_DIR}/src)
+    target_link_libraries(theme_tests PRIVATE $<TARGET_PROPERTY:tinta,LINK_LIBRARIES>)
+    target_compile_definitions(theme_tests PRIVATE $<TARGET_PROPERTY:tinta,COMPILE_DEFINITIONS>
+        TINTA_THEME_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/inline-code-color.md")
+    add_test(NAME inline_code_theme COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:theme_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/theme-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_portable_test.cmake)
+
+    add_executable(context_menu_tests tests/context_menu_tests.cpp src/context_menu.cpp
+        src/markdown.cpp src/footnotes.cpp src/themes.cpp src/config_dir.cpp)
+    target_include_directories(context_menu_tests PRIVATE include ${md4c_SOURCE_DIR}/src)
+    target_link_libraries(context_menu_tests PRIVATE md4c shell32)
+    target_compile_definitions(context_menu_tests PRIVATE UNICODE _UNICODE)
+    add_test(NAME context_menu COMMAND context_menu_tests)
+
+    add_executable(math_parser_tests tests/math_parser_tests.cpp src/math_parser.cpp src/math_macros.cpp)
+    target_include_directories(math_parser_tests PRIVATE src)
+    add_test(NAME math_parser COMMAND math_parser_tests)
+
+    add_executable(math_layout_tests tests/math_layout_tests.cpp
+        src/math_parser.cpp src/math_macros.cpp src/math_render.cpp src/markdown.cpp src/footnotes.cpp src/themes.cpp src/config_dir.cpp)
+    target_include_directories(math_layout_tests PRIVATE include src ${md4c_SOURCE_DIR}/src)
+    target_link_libraries(math_layout_tests PRIVATE md4c d2d1 dwrite windowscodecs shell32 ole32)
+    target_compile_definitions(math_layout_tests PRIVATE UNICODE _UNICODE
+        TINTA_MATH_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/math-compatibility.md")
+    add_test(NAME math_layout COMMAND math_layout_tests)
+
+    add_executable(mermaid_tests
+        tests/mermaid_tests.cpp
+        tests/mermaid_c4_tests.cpp
+        tests/mermaid_robust_tests.cpp
+        tests/mermaid_family_tests.cpp
+        tests/mermaid_uml_tests.cpp
+        tests/mermaid_flowchart_tests.cpp
+        tests/mermaid_chart_tests.cpp
+        src/mermaid.cpp
+        src/mermaid_ext.cpp
+        src/mermaid_seq.cpp
+        src/mermaid_pie.cpp
+        src/mermaid_uml.cpp
+        src/mermaid_git.cpp
+        src/mermaid_gantt.cpp
+        src/mermaid_charts.cpp
+        src/mermaid_narrative.cpp
+        src/mermaid_grid.cpp
+        src/mermaid_charts2.cpp
+        src/mermaid_block.cpp
+        src/mermaid_c4.cpp
+    )
+    target_include_directories(mermaid_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    add_test(NAME mermaid_parser COMMAND mermaid_tests)
+
+    add_executable(document_tests
+        tests/document_tests.cpp
+        tests/markdown_parse_tests.cpp
+        src/document.cpp src/frontmatter.cpp
+        src/markdown.cpp src/footnotes.cpp
+    )
+    target_include_directories(document_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${md4c_SOURCE_DIR}/src
+    )
+    target_link_libraries(document_tests PRIVATE md4c)
+    add_test(NAME document_types COMMAND document_tests)
+
+    # Word and character counting (#240): plain text and parsed Markdown
+    add_executable(wordcount_tests
+        tests/wordcount_tests.cpp
+        src/wordcount.cpp
+        src/document.cpp src/frontmatter.cpp
+        src/markdown.cpp src/footnotes.cpp
+    )
+    target_include_directories(wordcount_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${md4c_SOURCE_DIR}/src
+    )
+    target_link_libraries(wordcount_tests PRIVATE md4c)
+    target_compile_definitions(wordcount_tests PRIVATE UNICODE _UNICODE
+        TINTA_COUNT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/word-count-240.md")
+    add_test(NAME word_count COMMAND wordcount_tests)
+
+    add_executable(inline_style_tests
+        tests/inline_style_tests.cpp
+        src/inline_style.cpp
+        src/markdown.cpp src/footnotes.cpp
+        src/themes.cpp
+        src/config_dir.cpp
+    )
+    target_include_directories(inline_style_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${md4c_SOURCE_DIR}/src
+    )
+    target_link_libraries(inline_style_tests PRIVATE md4c d2d1 dwrite windowscodecs shell32)
+    target_compile_definitions(inline_style_tests PRIVATE UNICODE _UNICODE)
+    add_test(NAME inline_styles COMMAND inline_style_tests)
+
+    add_executable(i18n_tests
+        tests/i18n_tests.cpp
+        src/i18n.cpp
+        src/config_dir.cpp
+    )
+    target_include_directories(i18n_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_link_libraries(i18n_tests PRIVATE shell32)
+    target_compile_definitions(i18n_tests PRIVATE UNICODE _UNICODE)
+    add_test(NAME i18n COMMAND i18n_tests)
+
+    add_executable(config_path_tests
+        tests/config_path_tests.cpp
+        src/config_dir.cpp
+    )
+    target_include_directories(config_path_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_link_libraries(config_path_tests PRIVATE shell32)
+    target_compile_definitions(config_path_tests PRIVATE UNICODE _UNICODE)
+    add_test(NAME config_paths COMMAND config_path_tests)
+endif()
+
+# Install
+install(TARGETS tinta RUNTIME DESTINATION bin)

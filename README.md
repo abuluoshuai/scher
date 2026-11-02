@@ -1,0 +1,285 @@
+<div align="center">
+  <img src="resources/tinta.ico" width="80">
+  <h1>Tinta</h1>
+  <p><em>Markdown, distilled.</em></p>
+  <p>A fast, lightweight Markdown and Mermaid viewer for Windows</p>
+
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="MIT License">
+  </a>
+</div>
+
+<br>
+
+> **[!NOTE]**
+> 本项目 clone 自 [oipoistar/tinta](https://github.com/oipoistar/tinta)（v3.8.0），在此感谢原作者的开源贡献。随后根据本人需求，纯使用 AI 进行了个性化定制，主要改动见下方 [本 fork 的定制内容](#本-fork-的定制内容)。
+
+Tinta is a **fast, lightweight Markdown and Mermaid viewer for Windows**, built with Direct2D and DirectWrite for hardware-accelerated rendering. A single native executable of about 2.5 MB that opens instantly — no Electron, no web engine, no installer.
+
+<p align="center">
+  <img src="https://tinta.cc/img/screenshots/paper.png" width="49%" alt="Tinta markdown viewer on Windows — Paper light theme">
+  <img src="https://tinta.cc/img/screenshots/midnight.png" width="49%" alt="Tinta markdown viewer on Windows — Midnight dark theme">
+</p>
+
+## 本 fork 的定制内容
+
+在上游 v3.8.0 基础上，通过 AI 完成了两项主要功能定制：
+
+- **标签页左置（左侧竖排标签栏）** - 设置 → 外观 → "标签栏位置"可在 **顶部 | 左侧** 之间切换。左侧模式下打开的文件以整行横排文件名的形式列在窗口左缘的竖排栏里，底部是新建标签按钮，列表溢出时可滚动，右缘可拖拽调整栏宽（220–560 逻辑像素，持久保存）。
+- **SSH 远程阅读** - 直接打开远程机器上的 Markdown（只读）。远程浏览器列出 `~/.ssh/config` 的 `Host` 条目并复用其中已配置的密钥（无密码登录）；中文路径与文件名全程无损；支持多选一次打开多个远程文件为标签页；远程文件与本地文件合并在同一个"最近文档"菜单中。
+
+此外还包括少量维护性调整：移除了版本更新检查，版本号重置为 1.0.0。
+
+## Install
+
+源码构建（Windows + MinGW-w64 或 MSVC，CMake 3.15+）：
+
+```bash
+mkdir build
+cd build
+cmake ..
+cmake --build . --config Release
+```
+
+（原始发布渠道见上游仓库：[Microsoft Store](https://apps.microsoft.com/detail/9MZ5MZ3L9RKF) / [GitHub Releases](https://github.com/oipoistar/tinta/releases)。）
+
+## Why Tinta?
+
+Most markdown apps ship an entire browser to render text. Tinta uses the GPU-accelerated text stack already built into Windows:
+
+|  | Tinta | Typora | Obsidian | VS Code |
+|---|---|---|---|---|
+| Startup | **<100 ms** | ~1.5 s | ~3 s | ~2 s |
+| Install size | **~2.5 MB** | ~90 MB | ~250 MB | ~350 MB |
+| Runtime | **Native Direct2D** | Electron | Electron | Electron |
+
+It's a viewer first: perfect as the double-click default for `.md` and `.mmd` files, for reading documentation and diagrams — with an edit mode when you need it.
+
+## Features
+
+- **Lightning-fast startup** - Direct2D rendering, no web engine overhead
+- **10 beautiful themes** - 5 light and 5 dark themes to choose from
+- **Hardware-accelerated** - Smooth text rendering via DirectWrite
+- **Word wrap** - Optional soft wrap in the editor (Ctrl+W)
+- **Native LaTeX math** - `$inline$` and `$$display$$` equations with matrices, cases, aligned equations, fractions, limits, accents and custom macros. Uses an installed math font; no bundled fonts or web engine. See the [supported math syntax](docs/math-support.md).
+- **Focused editing** - Hide the preview pane while writing (Ctrl+E)
+- **Native Mermaid diagrams** - 22 diagram families, from flowcharts with subgraphs through sequence, class, state, ER, gantt, and pie to C4, sankey, kanban, and radar - rendered without a web engine
+- **Export as HTML, DOCX, or PDF** - Right-click and pick "Export as..." for a self-contained web page, a Word document that opens natively, or a vector PDF; diagrams and math come along in every format
+- **Pandoc export** - With [pandoc](https://pandoc.org) installed (or pointed at in settings), the editor offers EPUB, OpenDocument, PowerPoint, RTF and LaTeX too; rich formats convert from Tinta's own HTML export so diagrams and math survive as vector graphics
+- **Start page** - Bare launches land on a launcher with recent files, quick actions labeled with your actual key bindings, and built-in guides; closing the last tab returns there, and Ctrl+T opens it as a new tab
+- **Review annotations** - Select text and press `A` to attach a note, stored as an invisible HTML comment in the file itself. Annotated passages get a tint and a marker rail beside the scrollbar; hover previews, click edits, and a copy-for-agent button turns the whole review into a paste-ready task list for any coding agent - as the agent fixes items and deletes the comments, the marks vanish live
+- **File references** - Plain-text paths like `docs/plan.md` become real links: live targets open as tabs, missing ones render as faded ghosts. Mouse back/forward (or Alt+arrows) walks your jumps with exact scroll restore
+- **Link peek** - Rest the pointer on a local `.md` or wiki link and the target appears fully rendered in a panel beside it, no tab opened
+- **Image lightbox** - Click any inline image to view it full size: wheel zooms, drag pans, Esc closes
+- **Copy tables as TSV** - Hover a table for a copy button that pastes into Excel or Sheets as a real grid
+- **Copy diagrams as images** - Hover a diagram for an Image button that puts a crisp 2x PNG on the clipboard
+- **Paste screenshots** - Ctrl+V a bitmap in edit mode and it saves as a PNG beside the document with the link inserted
+- **Pin on top** - A pushpin in the title bar keeps the window above every other app
+- **Rich tables** - Tables with bold, italic, code, and clickable links in cells
+- **Tabs** - Win11 Notepad-style tabs in the title bar: files opened from Explorer join the window as tabs, Ctrl+Tab cycles, Ctrl+W or Ctrl+F4 closes (Ctrl+F4 also while editing, where Ctrl+W is word wrap), middle-click closes, Ctrl+T opens the file browser into a new tab, unsaved buffers show a dot, resting the pointer on a tab shows its full name, its folder and what its dot means, and dragging reorders tabs. Right-click a tab for close operations (close, close all but this, close all to the left/right) plus copy path and reveal in Explorer. Pulling a tab out of the strip floats it as a card: drop it on open space for a new window (which keeps the tab row), or onto another Tinta window to move it there — and dropping a single-file window onto a tab strip merges it back. Single-file windows stay tabless; turn the Explorer behavior off with the "Open files in tabs" setting
+- **Folder browser** - Press B to browse and open Markdown or Mermaid files (Ctrl+click a file to open it in a new tab)
+- **Table of contents** - Press Tab to see document headings, click to jump; the panel follows your reading position, and typing filters the headings
+- **Unified editor** - Press `:` to edit: your raw Markdown on the left with the rendered page docked beside it. A slim line-number gutter, a soft accent wash on the caret's line and its rendered block, a tool rail with formatting controls plus table-size and diagram-template pickers, and Markdown assists (lists continue on Enter, Tab indents, Ctrl+B/I wrap, and a quote, bracket or `* ~ ^ = :` typed over a selection wraps it). Alt+↑/↓ moves lines, and several carets (Alt+click, Ctrl+Alt+↑/↓, Ctrl+D) type, delete and move together, handy for lining up tables. A word and character count sits beside the Read button, for the whole document or the selection. Search and find-replace work in the editor too
+- **Emoji shortcodes** - `:rocket:` and friends render as real emoji
+- **Fit to width** - Wide tables and diagrams grow a Fit button that shrinks them to the reading column
+- **Draft recovery** - Unsaved quick notes are stashed continuously and offered back on the next launch. With **Close without asking** (Settings → Editor), closing Tinta skips the save prompt and keeps unsaved edits as drafts for the next launch
+- **Create on click** - Clicking a missing file reference offers to create the file and opens it ready to type
+- **SSH remote reading** - Open Markdown straight from another machine (read-only): the browser lists the `Host` entries of `~/.ssh/config` and connects with the keys that file already uses (no password login), keeps Chinese paths and file names intact, and opens a whole multi-selection as tabs. Remote files join one recent-documents menu with the local ones
+- **Text-file references** - `.txt`, `.json`, `.yaml` and friends link like Markdown files and open as highlighted documents
+- **Search** - Find text with F or Ctrl+F, cycle through matches with Enter; every match shows as a tick on the scrollbar. Ctrl+Shift+F, or the list button at the end of the search bar, opens a results panel beside the page: every match with a snippet, grouped under its heading, then the matches in your other open tabs and in the document's folder, by line. A click jumps to a match, or opens another file in its own tab at that match
+- **Persistent settings** - Remembers your theme, zoom level, and window position
+- **Portable mode** - Create a `settings.ini` next to `tinta.exe` (an empty file works) and the whole configuration — settings, custom themes, languages, drafts — lives beside the executable and travels with it; without one, everything stays in `%APPDATA%\Tinta`
+- **Localized interface** - English, Simplified Chinese, Japanese, Korean, German, French, and Italian UI; follows Windows or a chosen language
+- **Text selection & copy** - Select text and copy to clipboard
+- **Zoom support** - Ctrl+scroll to zoom in/out
+- **Drag & drop** - Drop any Markdown or Mermaid file to view it
+- **Minimal footprint** - Small binary, minimal dependencies
+
+## Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `B` | Toggle folder browser |
+| `Tab` | Toggle table of contents (type to filter, Enter jumps) |
+| `A` | Annotate the selected text |
+| `F` / `Ctrl+F` | Open search |
+| `Enter` | Next search match |
+| `Ctrl+Shift+F` | Search results panel: every match beside the page |
+| `ESC` | Close overlay / Quit |
+| `T` | Open theme chooser |
+| `S` | Toggle stats overlay |
+| `Ctrl+C` | Copy selected text (or all if none selected) |
+| `Ctrl+A` | Select all text |
+| `Ctrl+Scroll` | Zoom in/out |
+| `Arrow keys` / `J/K` | Scroll |
+| `Mouse back/forward` / `Alt+←/→` | Walk link jumps with scroll restore |
+| `Page Up/Down` | Page scroll |
+| `Home/End` | Jump to start/end |
+| `:` | Enter edit mode |
+| `ESC` `ESC` | Exit edit mode |
+| `Ctrl+N` | New quick note — a fresh window, start typing right away; `Ctrl+S` names it via the save dialog. While the note is still empty, an **Open a file** button (`Ctrl+O`) in the preview pane picks an existing file instead |
+| `Ctrl+S` | Save (in edit mode) |
+| `Ctrl+Shift+S` | Save As: the editor writes the buffer to a new path, the viewer saves a copy, and the document continues under the new name |
+| `Ctrl+H` | Find and replace (in edit mode): Tab switches fields, Enter replaces, Ctrl+Enter replaces all |
+| `Ctrl+P` | Print / export to PDF; the preview picks the paper, orientation and margins |
+| `Ctrl+E` | Show/hide preview pane (in edit mode) |
+| `Ctrl+Shift+E` | Read the unsaved edits at full width; `Esc` returns to the source (in edit mode) |
+| `Ctrl+W` | Toggle word wrap (in edit mode) |
+| `Alt+↑` / `Alt+↓` | Move the current line, or the selected lines, up or down (in edit mode) |
+| `Ctrl+Alt+↑` / `Ctrl+Alt+↓` / `Alt+Click` | Add a caret above, below or at the click; `Esc` returns to one caret (in edit mode) |
+| `Ctrl+D` | Select the word, then add its next occurrence as another caret (in edit mode) |
+| `Ctrl+F4` | Close the current tab (viewer and edit mode) |
+| `Q` | Quit |
+
+## Customization
+
+**Shortcut profiles** (Settings → Keyboard shortcuts): pick **Windows**
+(`E` edits, `F1` opens help, `F` searches — the default), **Vim** (`/`
+searches, `:` edits, `?` helps), or **Custom**. The Edit button opens a
+shortcut editor: click an action, press its new key. Raw `:` and `?`
+always work regardless of profile.
+
+Settings live in a plain INI file at `%APPDATA%\Tinta\settings.ini` (theme,
+zoom, window placement, word wrap, and more — written on exit). The `[Keys]`
+section holds the Custom profile's bindings if you prefer editing by hand:
+change a value and restart Tinta. Accepted values are letters, digits,
+`Tab`, `Space`, `F1`–`F12`, or any single character.
+
+```ini
+[Keys]
+search=F
+browse=B
+toc=Tab
+theme=T
+stats=S
+quit=Q
+newfile=N
+zen=F11
+scrollup=K
+scrolldown=J
+edit=:
+help=?
+```
+
+Ctrl combos (save, print, copy, word wrap…) are fixed. The help overlay and
+context menu show whatever keys are currently bound.
+
+Other settings of note: `browserFocusPath=1` makes `B` open the file browser
+with the path box focused and selected, so paste + Enter jumps anywhere
+(also in Settings → General). `tinta --new` starts an untitled quick note
+from the command line. The print preview offers 12.7, 19.05 and 25.4 mm page
+margins; `printMarginMm=` takes any value from 5 to 50 for printing and PDF.
+
+The interface language is available in Settings → General. It follows the
+Windows display language by default, or can be changed explicitly. Transient
+notifications and native error dialogs use the same language. Additional
+translations can be added through `languages.ini`; the app remains a native,
+single-file Windows viewer with no web runtime.
+
+## Usage
+
+```bash
+# Open a Markdown file
+tinta.exe document.md
+
+# Open a Mermaid flowchart
+tinta.exe diagram.mmd
+
+# Open with light theme
+tinta.exe -l document.md
+
+# Show stats on startup
+tinta.exe -s document.md
+
+# Register for Markdown and Mermaid files
+tinta.exe /register
+```
+
+Or simply drag and drop a `.md` or `.mmd` file onto the window.
+
+To copy a document's full path, right-click the document or its tab (the filename
+in the title bar when only one file is open) and choose
+**Copy file path**, beside **Reveal in Explorer**. The tab menu copies the clicked
+tab's path, even if another tab is active. Untitled notes have no path until saved.
+
+## File Association
+
+On first launch, Tinta will ask if you want to set it as the default viewer for Markdown and Mermaid files. If you choose "No", you won't be asked again.
+
+To register Tinta as the default viewer later, run:
+```bash
+tinta.exe /register
+```
+
+This registers `.md`, `.markdown`, and `.mmd` so you can select Tinta as their default app in Windows Settings.
+
+## Mermaid Support
+
+Tinta natively renders twenty-two Mermaid diagram families in `.mmd` files and fenced `mermaid` code blocks — no web engine involved:
+
+- **Flowcharts** (`flowchart` / `graph`) - TB/TD, BT, LR, RL layouts, `subgraph` groups, common node shapes, directed and labeled edges, `classDef`/`class`/`style` styling, and graceful handling of Mermaid 11 edge IDs and node configs
+- **Sequence diagrams** - participants and actors with aliases and `<br/>` breaks, every arrow family, activations, notes, `autonumber`, and `loop`/`alt`/`opt`/`par`/`critical`/`break` frames
+- **Class diagrams** - member blocks, stereotypes, `~T~` generics, all relation kinds with multiplicities, `note` and `note for`
+- **State diagrams** - `[*]` start/end, choice/fork/join, descriptions, directions, inline notes
+- **ER diagrams** - attribute tables with keys, full crow's-foot cardinality notation
+- **C4 diagrams** (`C4Context`/`C4Container`/`C4Component`/`C4Dynamic`/`C4Deployment`) - persons, systems, containers, and components in the standard C4 palette, nested boundaries, labeled relations
+- **Requirement diagrams** - typed requirement and element boxes with labeled relations
+- **Architecture diagrams** (`architecture-beta`) - services with line-art icons, groups, junctions, and side-anchored edges
+- **Block diagrams** (`block-beta`) - column grids, spans, spaces, nested blocks, block arrows, labeled edges
+- **Sankey diagrams** (`sankey-beta`) - ranked nodes with smooth flow ribbons
+- **Packet diagrams** (`packet-beta`) - 32-bit rows with labeled bit-range fields
+- **Kanban boards** - columns and cards with ticket, assignee, and priority metadata
+- **Treemaps** (`treemap-beta`) and **radar charts** (`radar-beta`)
+- **Pie charts**, **git graphs**, **gantt charts** (including the numeric `dateFormat X` axis), **mindmaps**, **timelines**, **user journeys**, **quadrant charts**, and **XY charts** (`xychart-beta`)
+
+Diagrams follow the active theme, print through Ctrl+P, export as SVG in HTML and as crisp images in DOCX, and their text is selectable and searchable like any other content. Anything a native renderer does not cover yet (composite states, zenuml) falls back to readable source code.
+
+## Themes
+
+Press `T` to open the theme chooser:
+
+**Light Themes:**
+- Paper - Warm sepia, literary feel
+- Sakura - Soft pink elegance
+- Arctic - Cool blue-white
+- Meadow - Fresh green
+- Dusk - Warm gray twilight
+
+**Dark Themes:**
+- Midnight - Deep blue-black
+- Dracula - Purple-tinted dark
+- Forest - Deep green
+- Ember - Warm charcoal
+- Abyss - Pure black (OLED-friendly)
+
+Custom themes live in `themes.ini` beside the portable executable, or in
+`%APPDATA%\Tinta`. Add `inlinecode` to a `[theme]` section to color inline code
+independently of fenced blocks:
+
+```ini
+code=334455
+inlinecode=B00020
+```
+
+Here inline code is red and plain fenced code stays neutral. Syntax highlighting
+keeps its own colors. Without `inlinecode`, inline code uses `code` as before.
+The override is preserved when saving a theme from the editor and applies to
+HTML and DOCX exports. Native printing keeps Tinta's light print palette, set in
+the theme's fonts.
+
+For supported code-fence languages and aliases, including SQL, PowerShell, Java,
+PHP, HTML/XML, CSS, YAML and Markdown, see [Syntax highlighting](docs/syntax-highlighting.md).
+The [Frontmatter settings](docs/frontmatter.md) page controls property display and optional created/updated dates.
+
+Named, repeated and multiline [footnotes](docs/footnotes.md) include native navigation and HTML/DOCX export.
+
+Individual H1-H6 and marked-text overrides are described in [Heading and highlight colours](docs/theme-colours.md).
+
+## Dependencies
+
+- [MD4C](https://github.com/mity/md4c) - Fast markdown parser (fetched automatically by CMake)
+- Windows Direct2D/DirectWrite (system libraries)
+
+## License
+
+MIT

@@ -1,0 +1,165 @@
+// Unit tests for the SSH remote layer's pure parts: URI parsing/formatting,
+// the ~/.ssh/config reader (through TINTA_SSH_CONFIG), the content cache and
+// the guards that keep unsafe host aliases off the command line.
+
+#include "fixture_path.h"
+#include "remote.h"
+#include "settings.h"
+
+#include <cstdio>
+#include <cstdlib>
+#include <iostream>
+#include <string>
+
+namespace {
+int failures = 0;
+void check(bool value, const char* message) {
+    if (!value) {
+        std::cerr << "FAIL: " << message << '\n';
+        ++failures;
+    }
+}
+
+void uriHelpers() {
+    check(!remotePathIs(""), "empty path is not remote");
+    check(!remotePathIs("C:/docs/a.md"), "a local path is not remote");
+    check(!remotePathIs("ssh:/short"), "a malformed scheme is not remote");
+    check(remotePathIs("ssh://host/a.md"), "the ssh scheme is recognised");
+
+    const std::string uri = "ssh://box/home/sch/笔记 一.md";
+    check(remotePathHost(uri) == "box", "host parsed");
+    check(remotePathFile(uri) == "/home/sch/笔记 一.md", "path parsed");
+    check(remotePathHost("ssh://box") == "box", "host without a path");
+    check(remotePathFile("ssh://box") == "/", "bare host reads as root");
+
+    check(remotePathMake("box", "/a/b.md") == "ssh://box/a/b.md",
+          "make keeps an absolute path");
+    check(remotePathMake("box", "rel.md") == "ssh://box/rel.md",
+          "make adds the separator for a relative path");
+    check(remotePathMake("box", "") == "ssh://box", "make without a path");
+
+    check(remoteParentDir("/a/b/c.md") == "/a/b", "parent of a nested file");
+    check(remoteParentDir("/x") == "/", "parent of a top-level entry");
+    check(remoteParentDir("/") == "/", "root is its own parent");
+    check(remoteParentDir("") == "/", "empty path reads as root");
+    check(remoteParentDir("/a/b/") == "/a", "trailing separator ignored");
+}
+
+std::string writeConfig(const char* body) {
+    char dir[MAX_PATH];
+    if (!GetTempPathA(MAX_PATH, dir)) return std::string();
+    std::string path = std::string(dir) + "tinta-remote-test-config";
+    FILE* f = fopen(path.c_str(), "wb");
+    if (!f) return std::string();
+    fwrite(body, 1, strlen(body), f);
+    fclose(f);
+    return path;
+}
+
+void configParsing() {
+    const char* body =
+        "# a comment\n"
+        "Host alpha beta\n"
+        "    HostName alpha.example\n"
+        "    User someone\n"
+        "    IdentityFile C:/keys/id_ed25519\n"
+        "\n"
+        "Host wide-*\n"
+        "    HostName ignored.example\n"
+        "\n"
+        "Host gamma\n"
+        "    Port 2222\n"
+        "Host alpha\n"
+        "    HostName duplicate.example\n"
+        "Host -dash\n"
+        "    HostName unsafe.example\n";
+    std::string configPath = writeConfig(body);
+    if (configPath.empty()) {
+        check(false, "temporary ssh config written");
+        return;
+    }
+    _putenv_s("TINTA_SSH_CONFIG", configPath.c_str());
+
+    auto hosts = remoteConfigHosts();
+    check(hosts.size() == 3, "two aliases from one Host line, one duplicate dropped");
+    if (hosts.size() == 3) {
+        check(hosts[0].alias == "alpha" && hosts[1].alias == "beta" &&
+                  hosts[2].alias == "gamma",
+              "aliases keep file order, wildcards and options are skipped");
+        check(hosts[0].hostName == "alpha.example",
+              "HostName is kept for a single-alias block");
+        check(hosts[1].hostName == "alpha.example",
+              "a shared HostName applies to every alias of its block");
+        check(hosts[2].hostName == "gamma", "missing HostName falls back to the alias");
+    }
+
+    // An alias that looks like an option must never reach the command line
+    App app;
+    remoteStartList(app, "-oProxyCommand=calc", "/");
+    remoteStartRead(app, "bad host", "/x.md");
+    check(remoteTakeFinished() == nullptr,
+          "unsafe aliases are refused before any process starts");
+
+    _putenv_s("TINTA_SSH_CONFIG", "");
+    remove(configPath.c_str());
+}
+
+void contentCache() {
+    const std::string uri = "ssh://box/cache.md";
+    check(remoteCachedContent(uri) == nullptr, "cache starts empty");
+    remoteStoreContent(uri, "# cached\n");
+    const std::string* hit = remoteCachedContent(uri);
+    check(hit && *hit == "# cached\n", "cache returns the stored text");
+    remoteStoreContent(uri, "# replaced\n");
+    check(*remoteCachedContent(uri) == "# replaced\n", "cache overwrites");
+
+    // The cache is keyed by the whole URI, so two hosts never share a body
+    check(remoteCachedContent("ssh://other/cache.md") == nullptr,
+          "another host with the same path misses");
+}
+
+void settingsRoundTrip() {
+    Settings settings;
+    settings.recentFiles.clear();
+    settings.remoteFiles.clear();
+    rememberReadingPosition(settings, "ssh://box/notes.md", 120.0f, 1.5f, 0.25f);
+    rememberReadingPosition(settings, "ssh://box/notes.md", 240.0f, 0.0f, 0.75f);
+    check(settings.readingPositions.size() == 1,
+          "the same document stays one entry");
+    const auto& entry = settings.readingPositions.front();
+    check(entry.scrollY == 240.0f, "the newest position wins");
+    check(entry.zoom == 1.5f, "a known zoom is kept when the new call omits it");
+    check(entry.readProgress == 0.75f, "progress follows the newest value");
+
+    rememberReadingPosition(settings, "ssh://box/notes.md", 300.0f, 0.0f, -1.0f);
+    check(settings.readingPositions.front().readProgress == 0.75f,
+          "an unknown progress keeps the stored one");
+
+    rememberReadingPosition(settings, "ssh://box/notes.md", 100.0f, 0.0f, 0.5f);
+    check(settings.readingPositions.front().readProgress == 0.5f,
+          "progress is allowed to move backwards");
+
+    for (int i = 0; i < 60; i++)
+        rememberReadingPosition(settings, "ssh://box/doc" + std::to_string(i) + ".md",
+                                1.0f, 0.0f, 0.1f);
+    check(settings.readingPositions.size() == 50, "the position list stays capped");
+}
+
+}  // namespace
+
+// The SSH exchange itself, against a test double: remote_process_tests.cpp
+int runRemoteProcessSuite();
+
+int main() {
+    uriHelpers();
+    configParsing();
+    contentCache();
+    settingsRoundTrip();
+    failures += runRemoteProcessSuite();
+    if (failures) {
+        std::cerr << "remote tests failed: " << failures << '\n';
+        return 1;
+    }
+    std::cout << "remote tests passed\n";
+    return 0;
+}
