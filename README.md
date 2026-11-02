@@ -38,6 +38,16 @@ cmake --build . --config Release
 
 产物为 `scher.exe`。
 
+一键脚本（自动定位 Qt 自带的 CMake / Ninja / MinGW，产物在 `build\`）：
+
+```bat
+build.bat            :: 构建 Release
+build.bat -p         :: 构建并打包 build\scher.zip
+build.bat -c -p      :: 清空构建目录后重新构建并打包
+```
+
+`-p` / `--package` 会在 `build\` 下生成 `scher.zip`，内含 `scher.exe` 及其运行时库（当前为静态链接，因此只有一个 exe），解压即可直接运行。工具链不在默认位置时，用环境变量 `MINGW_BIN`、`NINJA_EXE`、`CMAKE_EXE` 指过去。
+
 ## 为什么选择 Scher？
 
 大多数 Markdown 应用为了渲染文本会打包一整个浏览器。Scher 直接使用 Windows 内置的 GPU 加速文本栈：
