@@ -310,6 +310,32 @@ void browserTree() {
     check(app.remoteTree.size() == 2, "a collapsed folder hides its children");
 }
 
+// Row columns: the name never sits on the icon, and one depth step moves the
+// whole row by the same amount for files and folders alike.
+void browserRowColumns() {
+    App app;
+    app.contentScale = 1.0f;
+    const RemoteRowColumns root = remoteRowColumns(app, 0);
+    const RemoteRowColumns child = remoteRowColumns(app, 1);
+
+    check(root.textLeft - root.iconRight >= 6.0f,
+          "the name starts clear of the icon");
+    check(root.iconRight > root.iconCenter,
+          "the icon column reports its right edge past its centre");
+    check(root.textLeft > root.iconCenter,
+          "the name sits to the right of the icon centre");
+    check(std::abs((child.textLeft - root.textLeft) - 14.0f) < 0.01f,
+          "one depth step indents the name by exactly one step");
+    check(std::abs((child.iconCenter - root.iconCenter) - 14.0f) < 0.01f,
+          "the icon moves with the name, so the icon keeps its column");
+
+    // High display scaling must not squeeze the gap shut.
+    app.contentScale = 2.0f;
+    const RemoteRowColumns scaled = remoteRowColumns(app, 0);
+    check(scaled.textLeft - scaled.iconRight >= 12.0f,
+          "the gap scales with the display");
+}
+
 }  // namespace
 
 // The SSH exchange itself, against a test double: remote_process_tests.cpp
@@ -325,6 +351,7 @@ int main() {
     browserRefreshTarget();
     remoteImagePaths();
     browserTree();
+    browserRowColumns();
     failures += runRemoteProcessSuite();
     if (failures) {
         std::cerr << "remote tests failed: " << failures << '\n';

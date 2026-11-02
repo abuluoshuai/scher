@@ -111,6 +111,17 @@ bool remoteBrowserRefresh(App& app);
 // Flatten the browser's root listing and its expanded folders into the rows
 // the panel draws (also used by the tree tests).
 void remoteBuildTreeForTest(App& app);
+
+// Column geometry of one browser row, as insets from the row's left edge:
+// the icon is drawn around iconCenter, spans to iconRight, and the name
+// starts at textLeft. One place decides this, so files and folders line up
+// and the label can never sit on top of the glyph.
+struct RemoteRowColumns {
+    float iconCenter = 0.0f;
+    float iconRight = 0.0f;
+    float textLeft = 0.0f;
+};
+RemoteRowColumns remoteRowColumns(const App& app, int depth);
 // The directory a refresh targets - always the browsed one, never derived
 // from the open document or a previous selection.
 std::string remoteRefreshDir(const App& app);

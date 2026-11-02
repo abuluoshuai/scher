@@ -517,6 +517,20 @@ static void buildRemoteTree(App& app, const std::vector<App::RemoteRow>& rows,
     }
 }
 
+RemoteRowColumns remoteRowColumns(const App& app, int depth) {
+    const float chevronCol = dpi(app, 14.0f);   // disclosure column
+    const float iconSize = dpi(app, 14.0f);
+    const float iconHalf = iconSize * 0.55f;    // a folder spans +-0.55 * size
+    const float iconGap = dpi(app, 9.0f);
+    const float base = dpi(app, 10.0f) + dpi(app, 14.0f) * (float)depth;
+
+    RemoteRowColumns c;
+    c.iconCenter = base + chevronCol + iconHalf;
+    c.iconRight = c.iconCenter + iconHalf;
+    c.textLeft = c.iconRight + iconGap;
+    return c;
+}
+
 void remoteBuildTreeForTest(App& app) {
     app.remoteTree.clear();
     buildRemoteTree(app, app.remoteRows, 0);
@@ -672,41 +686,44 @@ void renderRemoteBrowser(App& app) {
                 D2D1::RoundedRect(row, dpi(app, 5.0f), dpi(app, 5.0f)),
                 app.brush);
         }
-        float indent = dpi(app, 12.0f + 14.0f * (float)item.depth);
-        float gx = row.left + indent;
         float cy = (row.top + row.bottom) * 0.5f;
-        // Folders carry a disclosure arrow in front of the folder glyph, so
-        // a collapsed tree still shows that there is more underneath.
+        // Three fixed columns per row - disclosure (folders only), icon, name -
+        // so files and folders line up and nothing overlaps the label. The
+        // glyphs take a centre, and a folder spans +-0.55 * size, which is why
+        // the icon column carries that half width.
+        const RemoteRowColumns cols = remoteRowColumns(app, item.depth);
+        const float chevronCol = dpi(app, 14.0f);
+        const float iconSize = dpi(app, 14.0f);
+        float col = row.left + dpi(app, 10.0f) + dpi(app, 14.0f) * (float)item.depth;
         if (item.isDir) {
-            float chevron = dpi(app, 8.0f);
+            float chevron = dpi(app, 7.0f);
+            float cxs = col + chevronCol * 0.5f;
             D2D1_COLOR_F arrow = dimText(app, 0.62f);
             app.brush->SetColor(arrow);
             if (item.expanded) {
                 app.renderTarget->DrawLine(
-                    D2D1::Point2F(gx, cy - chevron * 0.25f),
-                    D2D1::Point2F(gx + chevron * 0.5f, cy + chevron * 0.35f),
-                    app.brush, 1.2f);
+                    D2D1::Point2F(cxs - chevron * 0.5f, cy - chevron * 0.22f),
+                    D2D1::Point2F(cxs, cy + chevron * 0.32f), app.brush, 1.2f);
                 app.renderTarget->DrawLine(
-                    D2D1::Point2F(gx + chevron * 0.5f, cy + chevron * 0.35f),
-                    D2D1::Point2F(gx + chevron, cy - chevron * 0.25f),
+                    D2D1::Point2F(cxs, cy + chevron * 0.32f),
+                    D2D1::Point2F(cxs + chevron * 0.5f, cy - chevron * 0.22f),
                     app.brush, 1.2f);
             } else {
                 app.renderTarget->DrawLine(
-                    D2D1::Point2F(gx, cy - chevron * 0.5f),
-                    D2D1::Point2F(gx + chevron * 0.6f, cy),
-                    app.brush, 1.2f);
+                    D2D1::Point2F(cxs - chevron * 0.3f, cy - chevron * 0.5f),
+                    D2D1::Point2F(cxs + chevron * 0.35f, cy), app.brush, 1.2f);
                 app.renderTarget->DrawLine(
-                    D2D1::Point2F(gx + chevron * 0.6f, cy),
-                    D2D1::Point2F(gx, cy + chevron * 0.5f),
+                    D2D1::Point2F(cxs + chevron * 0.35f, cy),
+                    D2D1::Point2F(cxs - chevron * 0.3f, cy + chevron * 0.5f),
                     app.brush, 1.2f);
             }
         }
-        gx += dpi(app, 12.0f);
+        const float iconCx = row.left + cols.iconCenter;
         if (item.isDir)
-            drawFolderGlyph(app, gx, cy, dpi(app, 13.0f), dimText(app, 0.7f));
+            drawFolderGlyph(app, iconCx, cy, iconSize, dimText(app, 0.7f));
         else
-            drawPageGlyph(app, gx, cy, dpi(app, 13.0f), dimText(app, 0.7f));
-        float textLeft = gx + dpi(app, 16.0f);
+            drawPageGlyph(app, iconCx, cy, iconSize, dimText(app, 0.7f));
+        float textLeft = row.left + cols.textLeft;
         drawTrimmed(app, item.name,
                     D2D1::RectF(textLeft, row.top + dpi(app, 3.0f),
                                 row.right - dpi(app, 34.0f), row.bottom),
