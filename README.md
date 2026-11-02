@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="resources/tinta.ico" width="80">
+  <img src="resources/scher.ico" width="80">
   <h1>Scher</h1>
   <p><em>Markdown, distilled.</em></p>
   <p>一个快速、轻量的 Windows Markdown 与 Mermaid 查看器</p>
