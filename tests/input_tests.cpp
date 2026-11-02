@@ -1,4 +1,5 @@
 #include "input.h"
+#include "sidepanels.h"
 #include "d2d_init.h"
 #include "overlays.h"
 #include "settings.h"
@@ -151,7 +152,54 @@ void settingsDismissal() {
     state.reset();
     CoUninitialize();
 }
+
+// Dragging the left rail's width grip must end on mouse release. The press
+// sets swallowNextMouseUp, and the release used to be swallowed without ever
+// ending the drag - the divider then followed the pointer forever.
+void tabRailResizeRelease() {
+    auto state = std::make_unique<App>();
+    App& app = *state;
+    app.hwnd = CreateWindowExW(0, L"STATIC", L"Rail resize input tests", WS_POPUP,
+        100, 100, 1050, 900, nullptr, nullptr, nullptr, nullptr);
+    if (!app.hwnd) {
+        check(false, "a window for the rail resize test");
+        return;
+    }
+    app.width = 1050;
+    app.height = 900;
+    app.contentScale = 1.0f;
+    app.tabsOnLeft = true;
+    app.zenMode = false;
+    app.tabsWidth = 260.0f;
+    // The rail only shows with more than one tab (or a forced strip)
+    app.tabs.resize(2);
+    app.tabs[0].id = 1;
+    app.tabs[0].path = "a.md";
+    app.tabs[1].id = 2;
+    app.tabs[1].path = "b.md";
+
+    const float edge = leftTabsRailWidth(app);
+    const float y = chromeTopHeight(app) + 120.0f;
+    check(tabRailResizeAt(app, edge, y), "the rail edge offers a resize grip");
+
+    handleMouseDown(app, app.hwnd, MK_LBUTTON, MAKELPARAM((int)edge, (int)y));
+    check(app.tabRailResize.active, "pressing the grip starts the drag");
+
+    handleMouseMove(app, app.hwnd, MAKELPARAM((int)edge + 40, (int)y));
+    check(app.tabsWidth > 260.0f, "the width follows the pointer during the drag");
+
+    const float duringDrag = app.tabsWidth;
+    handleMouseUp(app, app.hwnd, 0, MAKELPARAM((int)edge + 40, (int)y));
+    check(!app.tabRailResize.active, "releasing ends the drag");
+
+    handleMouseMove(app, app.hwnd, MAKELPARAM((int)edge + 120, (int)y));
+    check(app.tabsWidth == duringDrag,
+          "the divider stops following the pointer after release");
+
+    DestroyWindow(app.hwnd);
 }
+
+}  // namespace
 
 int runTabDropTests();
 int runTabHoverCardTests();
@@ -197,6 +245,7 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--search-panel-tests") return runSearchPanelTests();
     if (argc == 7 && std::string(argv[1]) == "--cascade") return runTabDropLaunchProbe();
     settingsDismissal();
+    tabRailResizeRelease();
     auto state = std::make_unique<App>();
     App& app = *state;
     app.hwnd = CreateWindowExW(0, L"STATIC", L"Tinta input tests", 0,

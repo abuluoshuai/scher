@@ -2877,6 +2877,17 @@ void handleMouseUp(App& app, HWND hwnd, WPARAM, LPARAM lParam) {
     }
     if (app.tableEditSelecting) { tableEditMouseUp(app); return; }
     if (app.searchSelectingField >= 0) { searchInputMouseUp(app); return; }
+    // The rail's width grip takes the press with swallowNextMouseUp set, so
+    // the release has to end the drag here - before any swallow handling -
+    // or the divider keeps following the pointer with no way to let go.
+    if (app.tabRailResize.active) {
+        app.mouseX = GET_X_LPARAM(lParam);
+        app.mouseY = GET_Y_LPARAM(lParam);
+        tabRailResizeMove(app, (float)app.mouseX);
+        tabRailResizeEnd(app, hwnd, false);
+        app.swallowNextMouseUp = false;
+        return;  // the release must not activate the tab under the grip
+    }
     if (app.scrollbarDragging || app.hScrollbarDragging) {
         app.mouseX = GET_X_LPARAM(lParam);
         app.mouseY = GET_Y_LPARAM(lParam);
