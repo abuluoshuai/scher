@@ -214,6 +214,38 @@ void wheelCoordinates() {
     }
 }
 
+// The refresh button re-lists the directory the window is showing. The trap
+// it must avoid: deriving the path from the open document or from a stale
+// selection instead of from the browse location.
+void browserRefreshTarget() {
+    App app;
+    app.remoteHost = "wsl";
+    app.remoteDir = "/home/sch/project";          // what the window shows
+    app.currentFile = "ssh://wsl/home/sch/other/file.md";  // unrelated doc
+    app.remotePicked = {3, 7};                    // rows ticked earlier
+    app.remoteRows.clear();
+    app.remoteRows.push_back({L"stale.md", false});
+
+    check(remoteRefreshDir(app) == "/home/sch/project",
+          "refresh targets the browsed directory, not the open document");
+    check(remoteRefreshDir(app) != "/home/sch/other",
+          "refresh never walks up from the open document's path");
+
+    // Guards: nothing to refresh without a host, and no second request while
+    // one is still running.
+    App idle = app;
+    idle.remoteHost.clear();
+    check(!remoteBrowserRefresh(idle), "no host means no refresh");
+    App busy = app;
+    busy.remoteInFlight = 1;
+    check(!remoteBrowserRefresh(busy),
+          "a refresh in flight blocks a second one");
+
+    // The success path spawns a real ssh job, which would collide with the
+    // process suite's job queue - the guards above cover the decision logic,
+    // and drive_remote_wsl_real.py covers the rest against real sshd.
+}
+
 }  // namespace
 
 // The SSH exchange itself, against a test double: remote_process_tests.cpp
@@ -226,6 +258,7 @@ int main() {
     settingsRoundTrip();
     browserWheel();
     wheelCoordinates();
+    browserRefreshTarget();
     failures += runRemoteProcessSuite();
     if (failures) {
         std::cerr << "remote tests failed: " << failures << '\n';

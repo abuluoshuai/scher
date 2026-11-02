@@ -5,6 +5,7 @@
 #include "input.h"
 #include "settings.h"
 #include "utils.h"
+#include "remote.h"
 
 #include <filesystem>
 #include <fstream>
@@ -146,6 +147,58 @@ int runTabHoverCardTests() {
     }
     check(tabHoverCardText(app, 0).folder != tabHoverCardText(app, 1).folder,
           "the two README.md tabs differ by folder");
+
+
+    // The remote browser's path row carries a refresh button next to Up and
+    // Home. Render the overlay and prove the button exists as a hit target to
+    // the right of the ones before it, inside the panel.
+    {
+        app.showRemoteBrowser = true;
+        app.remoteHost = "wsl";
+        app.remoteDir = "/home/sch";
+        app.remoteRows.clear();
+        app.remoteRows.push_back({L"docs", true});
+        app.remoteRows.push_back({L"note.md", false});
+        app.remoteInFlight = 0;
+        app.renderTarget->BeginDraw();
+        renderRemoteBrowser(app);
+        check(SUCCEEDED(app.renderTarget->EndDraw()),
+              "the remote browser renders");
+
+        // Codes from the browser's own hit table: 400 up, 401 home, 402 refresh
+        const std::pair<D2D1_RECT_F, int>* upHit = nullptr;
+        const std::pair<D2D1_RECT_F, int>* homeHit = nullptr;
+        const std::pair<D2D1_RECT_F, int>* refreshHit = nullptr;
+        for (const auto& hit : app.remoteHits) {
+            if (hit.second == 400) upHit = &hit;
+            if (hit.second == 401) homeHit = &hit;
+            if (hit.second == 402) refreshHit = &hit;
+        }
+        check(upHit != nullptr && homeHit != nullptr,
+              "up and home buttons are present");
+        check(refreshHit != nullptr, "the refresh button is present");
+        if (homeHit && refreshHit) {
+            check(refreshHit->first.left >= homeHit->first.right,
+                  "refresh sits after home, left to right");
+            check(refreshHit->first.right - refreshHit->first.left > dpi(app, 30.0f),
+                  "the refresh button is wide enough to hit");
+        }
+
+        // A listing in flight takes the button out of the hit table: a second
+        // click cannot queue behind the first.
+        app.remoteInFlight = 1;
+        app.renderTarget->BeginDraw();
+        renderRemoteBrowser(app);
+        app.renderTarget->EndDraw();
+        bool refreshWhileBusy = false;
+        for (const auto& hit : app.remoteHits)
+            if (hit.second == 402) refreshWhileBusy = true;
+        check(!refreshWhileBusy, "no refresh target while a listing runs");
+
+        app.remoteInFlight = 0;
+        app.showRemoteBrowser = false;
+        app.remoteRows.clear();
+    }
 
     for (int theme : {0, 5}) {
         applyTheme(app, theme);

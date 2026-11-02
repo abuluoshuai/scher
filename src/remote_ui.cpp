@@ -336,8 +336,11 @@ void handleRemoteTask(App& app) {
                 app.remoteRows.reserve(job->entries.size());
                 for (auto& e : job->entries)
                     app.remoteRows.push_back({e.name, e.isDir});
-                app.remotePicked.clear();
-                app.remoteScroll = 0.0f;
+                if (!app.remoteKeepPlace) {
+                    app.remotePicked.clear();
+                    app.remoteScroll = 0.0f;
+                }
+                app.remoteKeepPlace = false;
                 app.remoteMessage.clear();
             } else {
                 app.remoteMessage = toWide(job->error);
@@ -372,6 +375,7 @@ constexpr int kRBBrowseRow = 1000;
 constexpr int kRBHostBase = 1;
 constexpr int kRBUp = 400;
 constexpr int kRBHome = 401;
+constexpr int kRBRefresh = 402;
 constexpr int kRBOpen = 5000;
 constexpr int kRBClose = 5001;
 
@@ -407,10 +411,30 @@ void openRemoteBrowser(App& app) {
 
 void remoteBrowserNavigate(App& app, const std::string& dir) {
     if (app.remoteHost.empty()) return;
+    // Switching directories resets the view; only a refresh keeps it.
+    app.remoteKeepPlace = false;
     app.remoteMessage.clear();
     remoteStartList(app, app.remoteHost, dir);
     app.remoteInFlight++;
     InvalidateRect(app.hwnd, nullptr, FALSE);
+}
+
+// The directory a refresh re-lists: always the one the window is showing
+// (remoteDir is the resolved path of the last completed listing). It never
+// derives from the open document or from an earlier selection - that is the
+// whole point of the button.
+std::string remoteRefreshDir(const App& app) { return app.remoteDir; }
+
+// Re-list the browsed directory. Returns false when there is nothing to
+// refresh (no host) or a listing is already running, so a second click
+// cannot queue up behind the first.
+bool remoteBrowserRefresh(App& app) {
+    if (app.remoteHost.empty() || app.remoteInFlight > 0) return false;
+    remoteBrowserNavigate(app, remoteRefreshDir(app));
+    // navigate() clears the flag; a refresh sets it afterwards so the
+    // completion keeps the list where the reader left it.
+    app.remoteKeepPlace = true;
+    return true;
 }
 
 void renderRemoteBrowser(App& app) {
@@ -469,28 +493,40 @@ void renderRemoteBrowser(App& app) {
         y += chipH + dpi(app, 10.0f);
     }
 
-    // Path row: up / home + the current path
+    // Path row: up / home / refresh + the current path
     {
         float btnH = dpi(app, 22.0f);
         float upW = measureText(app, tr(app, "remote.up"),
                                 app.folderBrowserFormat) + dpi(app, 20.0f);
         float homeW = measureText(app, tr(app, "remote.home"),
                                   app.folderBrowserFormat) + dpi(app, 20.0f);
+        float refreshW = measureText(app, tr(app, "remote.refresh"),
+                                     app.folderBrowserFormat) + dpi(app, 20.0f);
         D2D1_RECT_F up = D2D1::RectF(panel.left + pad, y, panel.left + pad + upW,
                                      y + btnH);
         D2D1_RECT_F home = D2D1::RectF(up.right + dpi(app, 6.0f), y,
                                        up.right + dpi(app, 6.0f) + homeW,
                                        y + btnH);
+        D2D1_RECT_F refresh =
+            D2D1::RectF(home.right + dpi(app, 6.0f), y,
+                        home.right + dpi(app, 6.0f) + refreshW, y + btnH);
+        // Refresh needs a host to talk to and a listing to act on; while a
+        // listing is already in flight a second request would only queue
+        // up, so the button dims until the answer lands.
+        bool canRefresh = !app.remoteHost.empty() && app.remoteInFlight == 0;
         drawButton(app, up, tr(app, "remote.up"), false, !app.remoteHost.empty());
         drawButton(app, home, tr(app, "remote.home"), false, !app.remoteHost.empty());
+        drawButton(app, refresh, tr(app, "remote.refresh"), false, canRefresh);
         if (!app.remoteHost.empty()) {
             app.remoteHits.push_back({up, kRBUp});
             app.remoteHits.push_back({home, kRBHome});
         }
+        if (canRefresh) app.remoteHits.push_back({refresh, kRBRefresh});
+
         std::wstring pathText = joinHostPath(app.remoteHost,
                                              app.remoteDir);
         drawTrimmed(app, pathText,
-                    D2D1::RectF(home.right + dpi(app, 10.0f), y + dpi(app, 2.0f),
+                    D2D1::RectF(refresh.right + dpi(app, 10.0f), y + dpi(app, 2.0f),
                                 panel.right - pad, y + btnH),
                     app.folderBrowserFormat, dimText(app, 0.62f));
         y += btnH + dpi(app, 8.0f);
@@ -665,6 +701,12 @@ bool remoteBrowserMouseDown(App& app, HWND hwnd, float x, float y) {
             remoteBrowserNavigate(app, remoteParentDir(app.remoteDir));
         } else if (code == kRBHome) {
             remoteBrowserNavigate(app, "");
+        } else if (code == kRBRefresh) {
+            // Re-list the directory the window is showing. remoteDir is the
+            // resolved path of the last completed listing, so a refresh never
+            // drifts to some earlier selection or to the open document's
+            // folder.
+            remoteBrowserRefresh(app);
         } else if (code >= kRBBrowseRow) {
             int idx = code - kRBBrowseRow;
             if (idx >= 0 && idx < (int)app.remoteRows.size()) {

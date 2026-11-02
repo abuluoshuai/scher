@@ -629,6 +629,9 @@ struct App {
     std::string remoteDir;                 // listed directory, "" = home
     std::vector<int> remotePicked;         // selected file rows
     float remoteScroll = 0.0f;
+    // A refresh re-lists the same directory, so the list keeps its scroll
+    // position and selection; navigating to another directory resets both.
+    bool remoteKeepPlace = false;
     D2D1_RECT_F remoteListRect{};          // list viewport, refreshed per paint
     std::vector<std::pair<D2D1_RECT_F, int>> remoteHits;  // rebuilt per paint
 

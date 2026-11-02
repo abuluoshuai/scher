@@ -98,6 +98,13 @@ void openRemoteBrowser(App& app);
 void remoteBrowserNavigate(App& app, const std::string& dir);
 void renderRemoteBrowser(App& app);
 bool remoteBrowserMouseDown(App& app, HWND hwnd, float x, float y);
+
+// The refresh button: re-lists the directory the browser is showing. Returns
+// false when there is no host or a listing is already in flight.
+bool remoteBrowserRefresh(App& app);
+// The directory a refresh targets - always the browsed one, never derived
+// from the open document or a previous selection.
+std::string remoteRefreshDir(const App& app);
 bool remoteBrowserWheel(App& app, float delta, float x, float y);
 // Starts a read for every selected file and closes the browser
 void remoteBrowserOpenSelection(App& app);
