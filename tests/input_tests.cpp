@@ -2,6 +2,7 @@
 #include "sidepanels.h"
 #include "tabs.h"
 #include "startpage.h"
+#include "file_utils.h"
 #include "d2d_init.h"
 #include "overlays.h"
 #include "settings.h"
@@ -322,6 +323,91 @@ void tabRailStaleHits() {
 }
 
 
+
+// The local browser opens several files at once: each file row carries a tick
+// box, and ticking must not open the document behind it.
+void folderBrowserPickTicks() {
+    auto state = std::make_unique<App>();
+    App& app = *state;
+    app.hwnd = CreateWindowExW(0, L"STATIC", L"Picker tests", WS_POPUP,
+        0, 0, 1050, 900, nullptr, nullptr, nullptr, nullptr);
+    if (!app.hwnd || !initD2D(app) || !createRenderTarget(app)) {
+        check(false, "the picker test window initializes");
+        if (app.hwnd) DestroyWindow(app.hwnd);
+        return;
+    }
+    app.width = 1050;
+    app.height = 900;
+    app.contentScale = 1.0f;
+
+    wchar_t tmp[MAX_PATH]{};
+    GetTempPathW(MAX_PATH, tmp);
+    std::wstring dir = std::wstring(tmp) + L"scher-pick-test";
+    CreateDirectoryW(dir.c_str(), nullptr);
+    for (const wchar_t* name : {L"a.md", L"b.md"}) {
+        std::wstring path = dir + L"\\" + name;
+        HANDLE f = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
+                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (f != INVALID_HANDLE_VALUE) {
+            const char body[] = "# doc\n";
+            DWORD written = 0;
+            WriteFile(f, body, sizeof(body) - 1, &written, nullptr);
+            CloseHandle(f);
+        }
+    }
+
+    app.folderBrowserPath = dir;
+    app.showFolderBrowser = true;
+    app.folderBrowserAnimation = 1.0f;
+    populateFolderItems(app);
+    check(app.folderPicked.empty(), "a fresh listing starts with nothing ticked");
+
+    auto paint = [&]() {
+        app.renderTarget->BeginDraw();
+        renderFolderBrowser(app);
+        app.renderTarget->EndDraw();
+    };
+    paint();
+
+    FolderBrowserMetrics g = folderBrowserMetrics(app);
+    const float rowRight = g.cardRight - dpi(app, 6.0f);
+    const float tickX = rowRight - dpi(app, 16.0f);
+    // Walk the rows through the real hit test to find the tick box's row
+    float tickY = -1.0f;
+    for (float y = g.listStartY + g.namingOffset; y < g.listBottom; y += 2.0f) {
+        int idx = folderItemIndexAt(app, tickX, y);
+        if (idx >= 0 && app.folderItems[idx].name == L"a.md") { tickY = y; break; }
+    }
+    check(tickY > 0.0f, "the first file row is reachable for a tick");
+    if (tickY <= 0.0f) { DestroyWindow(app.hwnd); return; }
+
+    const std::string before = app.currentFile;
+    LPARAM tick = MAKELPARAM((int)tickX, (int)tickY);
+    handleMouseDown(app, app.hwnd, MK_LBUTTON, tick);
+    handleMouseUp(app, app.hwnd, 0, tick);
+    check(app.folderPicked.size() == 1 && app.folderPicked[0] == L"a.md",
+          "a click on the tick box selects the file");
+    check(app.currentFile == before,
+          "ticking a file does not open it");
+
+    handleMouseDown(app, app.hwnd, MK_LBUTTON, tick);
+    handleMouseUp(app, app.hwnd, 0, tick);
+    check(app.folderPicked.empty(), "clicking the tick box again clears it");
+
+    // A tick from one folder must not survive navigation
+    handleMouseDown(app, app.hwnd, MK_LBUTTON, tick);
+    handleMouseUp(app, app.hwnd, 0, tick);
+    check(app.folderPicked.size() == 1, "the file is ticked before navigating");
+    app.folderBrowserPath = std::wstring(tmp);
+    populateFolderItems(app);
+    check(app.folderPicked.empty(),
+          "changing directory drops the previous selection");
+
+    app.showFolderBrowser = false;
+    DestroyWindow(app.hwnd);
+}
+
+
 }  // namespace
 
 int runTabDropTests();
@@ -369,6 +455,7 @@ int main(int argc, char** argv) {
     if (argc == 7 && std::string(argv[1]) == "--cascade") return runTabDropLaunchProbe();
     settingsDismissal();
     tabRailHover();
+    folderBrowserPickTicks();
     tabRailStaleHits();
     tabRailResizeRelease();
     auto state = std::make_unique<App>();

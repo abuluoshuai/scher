@@ -3359,6 +3359,15 @@ void handleMouseUp(App& app, HWND hwnd, WPARAM, LPARAM lParam) {
                 return;
             }
 
+            // The batch button in the footer opens every ticked file
+            const D2D1_RECT_F& openBtn = app.folderOpenPickedRect;
+            if (openBtn.right > openBtn.left &&
+                (float)clickX >= openBtn.left && (float)clickX <= openBtn.right &&
+                (float)clickY >= openBtn.top && (float)clickY <= openBtn.bottom) {
+                openPickedFolderFiles(app, hwnd);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return;
+            }
             // Hit-test items at the CLICK position: the render-time hover
             // index lags a paint behind the mouse, so trusting it here
             // opened the previously highlighted row on fast move-and-click
@@ -3380,6 +3389,22 @@ void handleMouseUp(App& app, HWND hwnd, WPARAM, LPARAM lParam) {
                     }
                     populateFolderItems(app);
                 } else {
+                    // The tick box on the right toggles selection; the rest of
+                    // the row still opens the file on click
+                    {
+                        FolderBrowserMetrics m = folderBrowserMetrics(app);
+                        float rowRight = m.cardRight - dpi(app, 6.0f);
+                        if (clickX >= rowRight - dpi(app, 30.0f)) {
+                            auto at = std::find(app.folderPicked.begin(),
+                                                app.folderPicked.end(), item.name);
+                            if (at == app.folderPicked.end())
+                                app.folderPicked.push_back(item.name);
+                            else
+                                app.folderPicked.erase(at);
+                            InvalidateRect(hwnd, nullptr, FALSE);
+                            return;
+                        }
+                    }
                     // Open document
                     std::wstring fullPath = app.folderBrowserPath;
                     if (fullPath.back() != L'\\' && fullPath.back() != L'/') {

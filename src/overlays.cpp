@@ -6,6 +6,7 @@
 #include "d2d_init.h"
 #include "editor.h"
 #include "markdown.h"
+#include "tabs.h"
 #include "pandoc.h"
 #include "print.h"
 #include "settings.h"
@@ -377,6 +378,24 @@ static void drawPageGlyph(App& app, float cx, float cy, float s,
         app.renderTarget->DrawLine(D2D1::Point2F(cx - s * 0.16f, cy + s * 0.04f),
                                    D2D1::Point2F(cx + s * 0.16f, cy + s * 0.04f), app.brush, w);
     }
+}
+
+void openPickedFolderFiles(App& app, HWND hwnd) {
+    if (app.folderPicked.empty() || app.folderBrowserPath.empty()) return;
+    std::wstring dir = app.folderBrowserPath;
+    if (!dir.empty() && dir.back() != L'\\' && dir.back() != L'/') dir += L'\\';
+
+    // Copy first: tabOpenPath can repopulate the list and clear the ticks
+    const std::vector<std::wstring> picked = app.folderPicked;
+    app.folderPicked.clear();
+
+    for (size_t i = 0; i < picked.size(); i++) {
+        const std::wstring full = dir + picked[i];
+        // The first file reuses the current tab (or the empty one); the rest
+        // need their own, so nothing already open gets replaced.
+        tabOpenPath(app, hwnd, toUtf8(full), i > 0 || app.tabNewTabIntent);
+    }
+    app.tabNewTabIntent = false;
 }
 
 void renderFolderBrowser(App& app) {
@@ -800,12 +819,51 @@ void renderFolderBrowser(App& app) {
                 textColor = app.theme.text;
                 textColor.a = 0.85f * anim;
             }
+            // Files carry a tick box on the right: several can be picked and
+            // opened together, the way the remote browser already works.
+            float textRight = rowRight - dpi(app, 6.0f);
+            bool picked = false;
+            if (!item.isDirectory) {
+                picked = std::find(app.folderPicked.begin(), app.folderPicked.end(),
+                                   item.name) != app.folderPicked.end();
+                float bs = dpi(app, 14.0f);
+                D2D1_RECT_F box = D2D1::RectF(rowRight - bs - dpi(app, 8.0f),
+                                              gcy - bs * 0.5f,
+                                              rowRight - dpi(app, 8.0f),
+                                              gcy + bs * 0.5f);
+                if (picked) {
+                    D2D1_COLOR_F fill = app.theme.accent;
+                    fill.a = anim;
+                    app.brush->SetColor(fill);
+                    app.renderTarget->FillRoundedRectangle(
+                        D2D1::RoundedRect(box, dpi(app, 3.0f), dpi(app, 3.0f)),
+                        app.brush);
+                    D2D1_COLOR_F tick = D2D1::ColorF(1, 1, 1, 0.97f * anim);
+                    app.brush->SetColor(tick);
+                    app.renderTarget->DrawLine(
+                        D2D1::Point2F(box.left + bs * 0.26f, box.top + bs * 0.52f),
+                        D2D1::Point2F(box.left + bs * 0.44f, box.top + bs * 0.70f),
+                        app.brush, 1.6f);
+                    app.renderTarget->DrawLine(
+                        D2D1::Point2F(box.left + bs * 0.44f, box.top + bs * 0.70f),
+                        D2D1::Point2F(box.left + bs * 0.76f, box.top + bs * 0.30f),
+                        app.brush, 1.6f);
+                } else {
+                    D2D1_COLOR_F edge = app.theme.text;
+                    edge.a = 0.28f * anim;
+                    app.brush->SetColor(edge);
+                    app.renderTarget->DrawRoundedRectangle(
+                        D2D1::RoundedRect(box, dpi(app, 3.0f), dpi(app, 3.0f)),
+                        app.brush, 1.0f);
+                }
+                textRight = box.left - dpi(app, 7.0f);
+            }
             app.brush->SetColor(textColor);
             app.renderTarget->DrawText(item.name.c_str(), (UINT32)item.name.length(),
                 isCurrent && app.tocFormatBold ? app.tocFormatBold : browserFormat,
-                D2D1::RectF(textX, itemY + dpi(app, 4.0f), rowRight - dpi(app, 6.0f),
+                D2D1::RectF(textX, itemY + dpi(app, 4.0f), textRight,
                             itemY + itemHeight),
-                app.brush);
+                app.brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
         app.renderTarget->PopAxisAlignedClip();
 
@@ -875,16 +933,50 @@ void renderFolderBrowser(App& app) {
             panelFooterText(app, counts,
                 D2D1::RectF(g.cardLeft + padding, footTop + dpi(app, 7.0f),
                             g.cardRight - padding, g.cardBottom));
+            // With files ticked the hint gives way to the batch action
+            app.folderOpenPickedRect = D2D1_RECT_F{};
+            if (!app.folderPicked.empty() && app.folderBrowserNaming == 0) {
+                wchar_t label[96];
+                swprintf_s(label, L"%s (%d)", tr(app, "browser.open_picked"),
+                           (int)app.folderPicked.size());
+                float bw = measureText(app, label, app.signalSmallFormat) +
+                           dpi(app, 18.0f);
+                float bh = dpi(app, 20.0f);
+                D2D1_RECT_F btn = D2D1::RectF(g.cardRight - padding - bw,
+                                              footTop + dpi(app, 3.0f),
+                                              g.cardRight - padding,
+                                              footTop + dpi(app, 3.0f) + bh);
+                D2D1_COLOR_F fill = app.theme.accent;
+                fill.a = 0.16f * anim;
+                app.brush->SetColor(fill);
+                app.renderTarget->FillRoundedRectangle(
+                    D2D1::RoundedRect(btn, dpi(app, 5.0f), dpi(app, 5.0f)),
+                    app.brush);
+                float tw = measureText(app, label, app.signalSmallFormat);
+                D2D1_COLOR_F tc = app.theme.heading;
+                tc.a = anim;
+                app.brush->SetColor(tc);
+                app.renderTarget->DrawText(
+                    label, (UINT32)wcslen(label), app.signalSmallFormat,
+                    D2D1::RectF(btn.left + dpi(app, 9.0f), btn.top + dpi(app, 2.0f),
+                                btn.left + dpi(app, 9.0f) + tw + dpi(app, 4.0f),
+                                btn.bottom),
+                    app.brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                app.folderOpenPickedRect = btn;
+            }
             const wchar_t* hint = tr(app, app.folderBrowserNaming != 0
                                               ? "browser.naming_hint"
                                               : "browser.hint");
             float hw = measureText(app, hint, app.signalSmallFormat);
+            float hintRight = app.folderOpenPickedRect.right > app.folderOpenPickedRect.left
+                                  ? app.folderOpenPickedRect.left - dpi(app, 8.0f)
+                                  : g.cardRight - padding;
             if (measureText(app, counts, app.signalSmallFormat) + hw + dpi(app, 12.0f) <
-                g.cardRight - g.cardLeft - padding * 2) {
+                hintRight - g.cardLeft - padding) {
                 app.renderTarget->DrawText(hint, (UINT32)wcslen(hint),
                     app.signalSmallFormat,
-                    D2D1::RectF(g.cardRight - padding - hw, footTop + dpi(app, 7.0f),
-                                g.cardRight - padding + dpi(app, 2.0f), g.cardBottom),
+                    D2D1::RectF(hintRight - hw, footTop + dpi(app, 7.0f),
+                                hintRight + dpi(app, 2.0f), g.cardBottom),
                     app.brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
             }
         }

@@ -78,6 +78,8 @@ void populateFolderItems(App& app) {
     app.folderItems.clear();
     app.hoveredFolderIndex = -1;
     app.folderBrowserScroll = 0.0f;
+    // A fresh listing invalidates any ticked files from the last directory
+    app.folderPicked.clear();
 
     if (app.folderBrowserPath.empty()) return;
 

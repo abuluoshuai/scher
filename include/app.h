@@ -676,6 +676,11 @@ struct App {
     std::vector<FolderItem> folderItems;
     int hoveredFolderIndex = -1;
     float folderBrowserScroll = 0.0f;     // Scroll offset for folder list
+    // Files ticked for a batch open. Names (not paths) because the list is
+    // always the current directory's; populateFolderItems clears them on
+    // navigation, so a selection can never leak into another folder.
+    std::vector<std::wstring> folderPicked;
+    D2D1_RECT_F folderOpenPickedRect{};   // footer button, refreshed per paint
 
     // Path header editing + new file/folder creation (#52)
     bool folderBrowserEditingPath = false;   // Path header is an edit box
