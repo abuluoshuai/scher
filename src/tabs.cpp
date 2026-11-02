@@ -873,6 +873,12 @@ void renderTabStrip(App& app) {
     D2D1_COLOR_F faint = text;
     faint.a = 0.06f;
 
+    // The hit table is rebuilt by this paint, whichever placement draws. It
+    // must be cleared before the rail's early return: while the rail is up
+    // the old top-strip rectangles used to survive forever, so pointing at
+    // where the tabs used to be hit a stale tab (highlight, click, drag-out).
+    app.tabHits.clear();
+
     // ---- vertical rail (tabsOnLeft) --------------------------------------
     // The rail replaces the top tab row; the top bar keeps the caption
     // (drag, pin, min/max/close) and is drawn by the shared code below.
@@ -1129,8 +1135,6 @@ void renderTabStrip(App& app) {
         D2D1::RectF(0, 0, (float)app.width, stripH), app.brush);
 
     drawCaptionIcon(app, stripH);
-
-    app.tabHits.clear();
 
     bool tabless = !tabStripVisible(app);
     if (tabless) {

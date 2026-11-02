@@ -1,10 +1,13 @@
 #include "input.h"
 #include "sidepanels.h"
+#include "tabs.h"
+#include "startpage.h"
 #include "d2d_init.h"
 #include "overlays.h"
 #include "settings.h"
 
 #include <fstream>
+#include <iostream>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -199,6 +202,126 @@ void tabRailResizeRelease() {
     DestroyWindow(app.hwnd);
 }
 
+
+// In the left rail placement the pointers's row must be the row it is over:
+// hovering the caption band or the document must not light up a tab.
+void tabRailHover() {
+    auto state = std::make_unique<App>();
+    App& app = *state;
+    app.hwnd = CreateWindowExW(0, L"STATIC", L"Rail hover tests", WS_POPUP,
+        100, 100, 1050, 900, nullptr, nullptr, nullptr, nullptr);
+    if (!app.hwnd || !initD2D(app) || !createRenderTarget(app)) {
+        check(false, "the rail hover test window initializes");
+        if (app.hwnd) DestroyWindow(app.hwnd);
+        return;
+    }
+    app.width = 1050;
+    app.height = 900;
+    app.contentScale = 1.0f;
+    app.tabsOnLeft = true;
+    app.tabs.resize(3);
+    for (int i = 0; i < 3; i++) {
+        app.tabs[i].id = i + 1;
+        app.tabs[i].path = "doc" + std::to_string(i) + ".md";
+        app.tabs[i].title = L"doc" + std::to_wstring(i);
+    }
+    app.activeTab = 0;
+    // A document is open, so the rail (not the start page) is what renders
+    app.currentFile = "doc0.md";
+    auto paint = [&]() {
+        app.renderTarget->BeginDraw();
+        renderTabStrip(app);
+        app.renderTarget->EndDraw();
+    };
+    auto hoverAt = [&](float x, float y) {
+        paint();
+        handleMouseMove(app, app.hwnd, MAKELPARAM((int)x, (int)y));
+        return app.hoveredTab;
+    };
+
+    const float top = chromeTopHeight(app);
+    const float railW = leftTabsRailWidth(app);
+    paint();   // the hit table is filled by the paint pass
+    check(app.tabHits.size() >= 3, "the rail publishes one hit per tab");
+
+    // Rows start right below the caption: the first row is tab 0
+    check(hoverAt(railW * 0.5f, top + 8.0f) == 0,
+          "hovering the first rail row lights that row");
+    // The caption band above the rail is not a tab
+    const int captionHover = hoverAt(railW * 0.5f, top - 6.0f);
+    check(captionHover == -1, "the caption band above the rail is not a tab");
+    // Far right of the rail, same height as a row: no tab there
+    const int pageHover = hoverAt(railW + 200.0f, top + 8.0f);
+    check(pageHover == -1, "the document area beside the rail is not a tab");
+    // Below the last row (empty rail space) is not a tab either
+    const int emptyHover = hoverAt(railW * 0.5f, top + 3.0f * 34.0f + 40.0f);
+    check(emptyHover == -1, "empty rail space below the tabs is not a tab");
+
+    DestroyWindow(app.hwnd);
+}
+
+
+
+// Switching the tab bar from the top strip to the left rail must not leave
+// the old strip's rectangles in the hit table: they used to survive the
+// rail's early return, so pointing where the tabs used to be still hit a tab
+// (highlighted a rail row, switched on click, and could be dragged out).
+void tabRailStaleHits() {
+    auto state = std::make_unique<App>();
+    App& app = *state;
+    app.hwnd = CreateWindowExW(0, L"STATIC", L"Rail stale hit tests", WS_POPUP,
+        100, 100, 1050, 900, nullptr, nullptr, nullptr, nullptr);
+    if (!app.hwnd || !initD2D(app) || !createRenderTarget(app)) {
+        check(false, "the rail stale-hit window initializes");
+        if (app.hwnd) DestroyWindow(app.hwnd);
+        return;
+    }
+    app.width = 1050;
+    app.height = 900;
+    app.contentScale = 1.0f;
+    app.tabs.resize(3);
+    for (int i = 0; i < 3; i++) {
+        app.tabs[i].id = i + 1;
+        app.tabs[i].path = "doc" + std::to_string(i) + ".md";
+        app.tabs[i].title = L"doc" + std::to_wstring(i);
+    }
+    app.activeTab = 0;
+    app.currentFile = "doc0.md";
+    auto paint = [&]() {
+        app.renderTarget->BeginDraw();
+        renderTabStrip(app);
+        app.renderTarget->EndDraw();
+    };
+
+    // Top strip first, then the left rail: the strip rects must be gone
+    app.tabsOnLeft = false;
+    paint();
+    const size_t topHits = app.tabHits.size();
+    check(topHits >= 3, "the top strip publishes its own hits");
+
+    app.tabsOnLeft = true;
+    paint();
+    const float railW = leftTabsRailWidth(app);
+    size_t staleRect = 0;
+    for (const auto& hit : app.tabHits) {
+        // Only tab rows matter here; caption buttons (pin, history, +) are
+        // wider by design. A tab row never reaches past the rail's width.
+        if (hit.index >= 0 && hit.rect.right > railW + 1.0f) staleRect++;
+    }
+    // A left-rail Hover at the caption band is still no tab
+    handleMouseMove(app, app.hwnd,
+                    MAKELPARAM((int)(railW * 0.5f), 6));
+    check(app.hoveredTab == -1,
+          "the caption band above the rail holds no tab after the switch");
+    check(staleRect == 0,
+          "no hit rectangle from the old top strip survives the switch");
+    check(app.tabHits.size() <= 8,
+          "the rail republishes its own hits instead of stacking on the old");
+
+    DestroyWindow(app.hwnd);
+}
+
+
 }  // namespace
 
 int runTabDropTests();
@@ -245,6 +368,8 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--search-panel-tests") return runSearchPanelTests();
     if (argc == 7 && std::string(argv[1]) == "--cascade") return runTabDropLaunchProbe();
     settingsDismissal();
+    tabRailHover();
+    tabRailStaleHits();
     tabRailResizeRelease();
     auto state = std::make_unique<App>();
     App& app = *state;
