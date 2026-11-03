@@ -1789,17 +1789,22 @@ void openFileDialog(App& app, HWND hwnd) {
 
     const std::vector<std::string> picked = parseMultiSelectPaths(buffer.data());
     if (picked.empty()) return;
+    openPathsInTabs(app, hwnd, picked);
+}
 
-    // Only an empty launcher/note is replaced. A document or unsaved
-    // buffer stays in its tab, including when the picked path is open.
+// One file per tab, first one shown. An empty launcher/note is replaced by
+// the batch instead of lingering as a blank tab; anything with content keeps
+// its own tab. tabOpenPath's fourth argument is "activate", not "new tab" -
+// every call already appends a tab, so only the first one may take focus.
+void openPathsInTabs(App& app, HWND hwnd, const std::vector<std::string>& paths) {
+    if (paths.empty()) return;
+
     bool replaceEmpty = app.currentFile.empty() && !app.startPageEmbeddedOpen &&
                         (!app.editMode || (app.editorText.empty() && !app.editorDirty));
     tabsInit(app);
     int untitledId = replaceEmpty ? app.tabs[app.activeTab].id : -1;
-    // The first pick takes the current tab; the rest get their own so a
-    // multi-select never replaces a document that is already open.
-    for (size_t i = 0; i < picked.size(); i++)
-        tabOpenPath(app, hwnd, picked[i], i > 0);
+    for (size_t i = 0; i < paths.size(); i++)
+        tabOpenPath(app, hwnd, paths[i], i == 0);
     for (int i = 0; i < (int)app.tabs.size(); i++) {
         if (app.tabs[i].id == untitledId) {
             tabCloseIndex(app, hwnd, i);

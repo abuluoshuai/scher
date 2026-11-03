@@ -56,6 +56,10 @@ void restoreEditBuffer(App& app, const std::wstring& text, bool dirty,
 bool quickNoteEmptyStateActive(const App& app);
 // Open in a tab, preserving existing/unsaved documents in either mode.
 void openFileDialog(App& app, HWND hwnd);
+
+// Opens each path in its own tab and shows the first one. An empty, untitled
+// tab is closed so a batch open leaves no blank page behind.
+void openPathsInTabs(App& app, HWND hwnd, const std::vector<std::string>& paths);
 void renderQuickNoteEmptyState(App& app);
 
 // File save; Save As (Ctrl+Shift+S) re-prompts for the path and moves the

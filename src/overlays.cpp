@@ -389,12 +389,12 @@ void openPickedFolderFiles(App& app, HWND hwnd) {
     const std::vector<std::wstring> picked = app.folderPicked;
     app.folderPicked.clear();
 
-    for (size_t i = 0; i < picked.size(); i++) {
-        const std::wstring full = dir + picked[i];
-        // The first file reuses the current tab (or the empty one); the rest
-        // need their own, so nothing already open gets replaced.
-        tabOpenPath(app, hwnd, toUtf8(full), i > 0 || app.tabNewTabIntent);
-    }
+    std::vector<std::string> paths;
+    paths.reserve(picked.size());
+    for (const auto& name : picked) paths.push_back(toUtf8(dir + name));
+    // Same routine as the system dialog: one tab per file, first one shown,
+    // an empty untitled tab closed behind us.
+    openPathsInTabs(app, hwnd, paths);
     app.tabNewTabIntent = false;
 }
 

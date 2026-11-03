@@ -279,6 +279,71 @@ void openDialogPaths() {
     check(parseMultiSelectPaths(L"").empty(), "an empty buffer yields no paths");
 }
 
+// A multi-select batch opens one tab per file and lands on the first one.
+// tabOpenPath's fourth argument is "activate", so passing true for every file
+// would leave the LAST file shown and the first one buried.
+void batchOpenTabs() {
+    wchar_t tmp[MAX_PATH];
+    GetTempPathW(MAX_PATH, tmp);
+    std::wstring dir = std::wstring(tmp) + L"tinta-batch-" +
+                       std::to_wstring(GetCurrentProcessId());
+    CreateDirectoryW(dir.c_str(), nullptr);
+
+    std::vector<std::string> paths;
+    for (const wchar_t* name : {L"one.md", L"two.md", L"three.md"}) {
+        const std::wstring full = dir + L"\\" + name;
+        FILE* f = _wfopen(full.c_str(), L"wb");
+        if (f) { fputs("# doc\n", f); fclose(f); }
+        paths.push_back(toUtf8(full));
+    }
+    if (paths.size() != 3) { check(false, "three fixture files"); return; }
+
+    auto state = std::make_unique<App>();
+    App& app = *state;
+    app.hwnd = CreateWindowExW(0, L"STATIC", L"Tinta batch open test", WS_POPUP,
+                               0, 0, 1050, 900, nullptr, nullptr, nullptr, nullptr);
+    if (!app.hwnd) { check(false, "the batch open window"); return; }
+    app.width = 1050;
+    app.height = 900;
+
+    // Start from the empty launcher: its untitled tab must not survive
+    app.tabs.clear();
+    app.tabs.push_back({});
+    app.tabs[0].id = 1;
+    app.activeTab = 0;
+    app.currentFile.clear();
+    openPathsInTabs(app, app.hwnd, paths);
+
+    check(app.tabs.size() == 3, "each picked file gets a tab");
+    check(!app.tabs.empty() && app.tabs[0].path == paths[0] &&
+              app.tabs[1].path == paths[1] && app.tabs[2].path == paths[2],
+          "the tabs carry the picked paths in order");
+    check(app.currentFile == paths[0],
+          "the first picked file is the one shown");
+    check(app.tabs[app.activeTab].path == paths[0],
+          "the active tab is the first picked file");
+
+    // An open document keeps its tab: the batch appends, never replaces
+    App second;
+    second.hwnd = app.hwnd;
+    second.width = 1050;
+    second.height = 900;
+    second.tabs.clear();
+    second.tabs.push_back({});
+    second.tabs[0].id = 1;
+    second.tabs[0].path = "C:////existing.md";
+    second.activeTab = 0;
+    second.currentFile = "C:////existing.md";
+    openPathsInTabs(second, second.hwnd, {paths[0], paths[1]});
+    check(second.tabs.size() == 3, "the open document keeps its tab");
+    check(second.tabs[0].path == "C:////existing.md",
+          "the existing document stays in the first tab");
+    check(second.currentFile == paths[0],
+          "the first picked file is shown, not the existing one");
+
+    DestroyWindow(app.hwnd);
+}
+
 int main(int argc, char** argv) {
     pathHelpers();
     // Default CTest runs are read-only. The explicit clipboard mode also
@@ -286,6 +351,7 @@ int main(int argc, char** argv) {
     bool testClipboard = argc == 2 && std::string(argv[1]) == "--clipboard-test";
     launchFolderRelease();
     openDialogPaths();
+    batchOpenTabs();
     titleMenuCases(testClipboard);
     auto state = std::make_unique<App>();
     App& app = *state;
