@@ -1765,7 +1765,13 @@ bool quickNoteEmptyStateActive(const App& app) {
 }
 
 void openFileDialog(App& app, HWND hwnd) {
-    wchar_t path[MAX_PATH] = L"";
+    // Multi-select needs room for "directory\0name1\0name2...". MAX_PATH is
+    // not enough: the dialog appends every selected name to one buffer, so
+    // give it the practical 64 KB ceiling.
+    static constexpr size_t kBufferChars = 64 * 1024;
+    static std::vector<wchar_t> buffer;
+    buffer.assign(kBufferChars, L'\0');
+
     OPENFILENAMEW ofn = {};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = hwnd;
@@ -1775,11 +1781,14 @@ void openFileDialog(App& app, HWND hwnd) {
                       L"Markdown / Mermaid (*.md;*.markdown;*.mmd)\0"
                       L"*.md;*.markdown;*.mmd\0"
                       L"All files (*.*)\0*.*\0";
-    ofn.lpstrFile = path;
-    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrFile = buffer.data();
+    ofn.nMaxFile = (DWORD)buffer.size();
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR |
-                OFN_HIDEREADONLY;
+                OFN_HIDEREADONLY | OFN_ALLOWMULTISELECT | OFN_EXPLORER;
     if (!runOpenFileDialog(ofn)) return;
+
+    const std::vector<std::string> picked = parseMultiSelectPaths(buffer.data());
+    if (picked.empty()) return;
 
     // Only an empty launcher/note is replaced. A document or unsaved
     // buffer stays in its tab, including when the picked path is open.
@@ -1787,7 +1796,10 @@ void openFileDialog(App& app, HWND hwnd) {
                         (!app.editMode || (app.editorText.empty() && !app.editorDirty));
     tabsInit(app);
     int untitledId = replaceEmpty ? app.tabs[app.activeTab].id : -1;
-    tabOpenPath(app, hwnd, toUtf8(path));
+    // The first pick takes the current tab; the rest get their own so a
+    // multi-select never replaces a document that is already open.
+    for (size_t i = 0; i < picked.size(); i++)
+        tabOpenPath(app, hwnd, picked[i], i > 0);
     for (int i = 0; i < (int)app.tabs.size(); i++) {
         if (app.tabs[i].id == untitledId) {
             tabCloseIndex(app, hwnd, i);

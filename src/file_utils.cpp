@@ -1,6 +1,7 @@
 #include "file_utils.h"
 #include "document.h"
 #include "utils.h"
+#include "editor.h"
 
 #include <algorithm>
 
@@ -72,6 +73,25 @@ bool runSaveFileDialog(OPENFILENAMEW& ofn) {
     bool picked = GetSaveFileNameW(&ofn) != FALSE;
     parkWorkingDirectory();
     return picked;
+}
+
+std::vector<std::string> parseMultiSelectPaths(const wchar_t* buffer) {
+    std::vector<std::string> paths;
+    if (!buffer || !*buffer) return paths;
+
+    const size_t dirLen = wcslen(buffer);
+    const wchar_t* names = buffer + dirLen + 1;
+    if (*names == L'\0') {
+        // One selection: the buffer is the complete path
+        paths.push_back(toUtf8(buffer));
+        return paths;
+    }
+
+    std::wstring dir(buffer, dirLen);
+    if (!dir.empty() && dir.back() != L'\\' && dir.back() != L'/') dir += L'\\';
+    for (const wchar_t* name = names; *name; name += wcslen(name) + 1)
+        paths.push_back(toUtf8(dir + name));
+    return paths;
 }
 
 void populateFolderItems(App& app) {

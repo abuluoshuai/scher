@@ -13,6 +13,11 @@ std::wstring getParentPath(const std::wstring& path);
 std::wstring getDirectoryFromFile(const std::string& filePath);
 void populateFolderItems(App& app);
 
+// Turns the GetOpenFileName buffer into UTF-8 paths. With
+// OFN_ALLOWMULTISELECT the buffer holds "directory\0name1\0name2\0\0";
+// a single selection is just the one full path, so both shapes are handled.
+std::vector<std::string> parseMultiSelectPaths(const wchar_t* buffer);
+
 // The folder Tinta was started in, captured before the process first
 // leaves it. Relative arguments, the file browser's fallback and an
 // untitled note's relative images resolve against it (#253).

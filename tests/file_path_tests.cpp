@@ -1,5 +1,6 @@
 #include "d2d_init.h"
 #include "file_utils.h"
+#include "editor.h"
 #include "input.h"
 #include "overlays.h"
 #include "tabs.h"
@@ -214,12 +215,77 @@ void pathHelpers() {
           "a bare name resolves to the working directory");
 }
 
+// The system open dialog hands back either one full path (single pick) or
+// "directory<NUL>name1<NUL>name2<NUL><NUL>" (multi pick). Both shapes must
+// become real paths. The separator and the NUL are built numerically so this
+// file needs no escaped backslash anywhere.
+void openDialogPaths() {
+    const wchar_t kSep = static_cast<wchar_t>(92);
+    const wchar_t kNul = static_cast<wchar_t>(0);
+
+    auto join = [&](const std::vector<std::wstring>& parts) {
+        std::wstring out;
+        for (size_t i = 0; i < parts.size(); i++) {
+            if (i) out += kSep;
+            out += parts[i];
+        }
+        return out;
+    };
+    auto bufferOf = [&](const std::vector<std::wstring>& items) {
+        std::vector<wchar_t> buf;
+        for (const auto& item : items) {
+            buf.insert(buf.end(), item.begin(), item.end());
+            buf.push_back(kNul);
+        }
+        buf.push_back(kNul);
+        return buf;
+    };
+
+    const std::wstring expected = join({L"C:", L"docs", L"note.md"});
+
+    // Single selection: one complete path, nothing after it
+    {
+        auto buf = bufferOf({expected});
+        auto one = parseMultiSelectPaths(buf.data());
+        check(one.size() == 1, "a single pick yields one path");
+        check(one.size() == 1 && one[0] == toUtf8(expected),
+              "a single pick keeps its full path");
+    }
+
+    // Multiple selections: the directory, then bare names
+    {
+        const std::wstring dir = join({L"C:", L"docs"});
+        auto buf = bufferOf({dir, L"a.md", L"b.md", L"c.md"});
+        auto many = parseMultiSelectPaths(buf.data());
+        check(many.size() == 3, "every selected name is returned");
+        check(many.size() == 3 && many[0] == toUtf8(join({dir, L"a.md"})) &&
+                  many[1] == toUtf8(join({dir, L"b.md"})) &&
+                  many[2] == toUtf8(join({dir, L"c.md"})),
+              "names are joined onto the directory");
+    }
+
+    // A directory that already ends with a separator must not double it
+    {
+        const std::wstring dir = join({L"C:", L"docs"}) + kSep;
+        auto buf = bufferOf({dir, L"a.md"});
+        auto joined = parseMultiSelectPaths(buf.data());
+        check(joined.size() == 1 &&
+                  joined[0] == toUtf8(join({L"C:", L"docs", L"a.md"})),
+              "an existing separator is not doubled");
+    }
+
+    // Cancelled dialog / empty buffer: nothing to open
+    check(parseMultiSelectPaths(nullptr).empty(), "a null buffer yields no paths");
+    check(parseMultiSelectPaths(L"").empty(), "an empty buffer yields no paths");
+}
+
 int main(int argc, char** argv) {
     pathHelpers();
     // Default CTest runs are read-only. The explicit clipboard mode also
     // exercises the real menus/Win32 clipboard and overwrites its contents.
     bool testClipboard = argc == 2 && std::string(argv[1]) == "--clipboard-test";
     launchFolderRelease();
+    openDialogPaths();
     titleMenuCases(testClipboard);
     auto state = std::make_unique<App>();
     App& app = *state;
