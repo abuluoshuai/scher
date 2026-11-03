@@ -48,7 +48,12 @@ void landed(App& app, const std::string& id) {
     bool found = false;
     for (const auto& h : app.headings) if (h.id == id) {
         found = true;
-        float expected = std::max(0.0f, std::min(h.y - chromeTopHeight(app) - dpi(app,14),
+        // Layout starts at documentContentTop (chrome + the document's own
+        // top padding), so the landing scroll has to subtract that origin.
+        // This expectation used to subtract the chrome height alone, which
+        // hid the top 20 px of the target heading - the jump landed just
+        // below it.
+        float expected = std::max(0.0f, std::min(h.y - documentContentTop(app) - dpi(app,14),
                                                 app.contentHeight - app.height));
         check(std::abs(app.scrollY - expected) < 1, "destination heading is aligned in the viewport");
     }

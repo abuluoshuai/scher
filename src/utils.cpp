@@ -162,9 +162,11 @@ std::string slugifyHeading(const std::wstring& text) {
 }
 
 void scrollToHeadingY(App& app, float headingY) {
-    // The title-bar tab strip draws over the document's top band, so the
-    // landing margin must clear it or the heading arrives half-hidden
-    float targetY = headingY - chromeTopHeight(app) - dpi(app, 14.0f);
+    // Layout starts at documentContentTop, not at the chrome edge: the
+    // document's own top padding (20 scale px) is part of every heading's
+    // y. Subtracting only the chrome height scrolled those 20 px too far,
+    // so a jump landed just below the heading it aimed at.
+    float targetY = headingY - documentContentTop(app) - dpi(app, 14.0f);
     float maxScroll = std::max(0.0f, app.contentHeight - app.height);
     app.scrollY = std::max(0.0f, std::min(targetY, maxScroll));
     app.targetScrollY = app.scrollY;

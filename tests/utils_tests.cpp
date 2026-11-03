@@ -9,6 +9,7 @@
 #include "document.h"
 #include "editor.h"
 #include "utils.h"
+#include <cmath>
 
 #include <iostream>
 #include <string>
@@ -146,6 +147,43 @@ void utfConversions() {
     check(toUtf8(L"") == "", "an empty wide string converts to empty");
 }
 
+// A contents click must land the heading itself just inside the content
+// area. Layout starts at documentContentTop, so the jump has to subtract that
+// (chrome plus the document's own top padding), not just the chrome - the
+// difference is exactly the 20 px of padding, which used to scroll past the
+// heading.
+void headingJump() {
+    App app;
+    app.width = 1000;
+    app.height = 800;
+    app.contentScale = 1.0f;
+    app.contentHeight = 5000.0f;
+    const float headingY = 1200.0f;
+    const float margin = dpi(app, 14.0f);
+
+    scrollToHeadingY(app, headingY);
+    const float landY = headingY - app.scrollY;
+    check(std::fabs(landY - (documentContentTop(app) + margin)) < 0.01f,
+          "the heading lands margin below the content top");
+    check(std::fabs(app.scrollY -
+                    (headingY - documentContentTop(app) - margin)) < 0.01f,
+          "the scroll offset accounts for the document's top padding");
+
+    // The old formula scrolled 20 scale px too far; prove the two differ
+    check(std::fabs((headingY - chromeTopHeight(app) - margin) - app.scrollY) >
+              1.0f,
+          "the chrome height alone is not the right origin");
+
+    // Never scroll before the top of the document
+    scrollToHeadingY(app, 0.0f);
+    check(app.scrollY == 0.0f, "a heading at the top clamps to the start");
+
+    // Never past the end of the document
+    scrollToHeadingY(app, 99999.0f);
+    check(std::fabs(app.scrollY - (app.contentHeight - app.height)) < 0.01f,
+          "a heading past the end clamps to the last screen");
+}
+
 }  // namespace
 
 int runUtilsSuite() {
@@ -153,6 +191,7 @@ int runUtilsSuite() {
     textViews();
     extractedText();
     utfConversions();
+    headingJump();
     if (failures != 0) {
         std::cerr << failures << " text helper test(s) failed\n";
     }
