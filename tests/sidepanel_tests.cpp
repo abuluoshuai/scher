@@ -361,7 +361,65 @@ void longContents(App& app) {
 }
 }
 
+// Switching the tab strip between the top and the left rail must not move
+// the document's top edge: the rail is a left-edge occupant, so it may only
+// change the viewport's x and width. Both placements read chromeTopHeight,
+// and that is what documentContentTop builds on.
+void chromeTopIsPlacementIndependent() {
+    auto state = std::make_unique<App>();
+    App& app = *state;
+    if (!initD2D(app)) { check(false, "d2d initializes for the chrome test"); return; }
+    app.width = 1050;
+    app.height = 900;
+    app.contentScale = 1.0f;
+    app.readingWidthPct = 100;
+    applyTheme(app, 0);
+    updateTextFormats(app);
+
+    const std::string source = "# Title\n\nbody text\n\n## Section\n\nmore\n";
+    auto lay = [&]() {
+        auto doc = app.parser.parse(source);
+        check(doc.success, "chrome fixture parses");
+        app.root = doc.root;
+        layoutDocument(app);
+    };
+
+    // Top strip: a single tab is enough, the strip is there either way
+    app.tabsOnLeft = false;
+    app.tabs.resize(1);
+    app.tabs[0].id = 1;
+    app.activeTab = 0;
+    lay();
+    const float topStripChrome = chromeTopHeight(app);
+    const float topStripContentTop = documentContentTop(app);
+    const float topStripHeadingY = app.headings.empty() ? -1.0f : app.headings[0].y;
+    const float topStripViewportX = documentViewportX(app);
+    const float topStripViewportW = documentViewportWidth(app);
+
+    // Left rail: the rail only shows with more than one tab
+    app.tabsOnLeft = true;
+    app.tabs.resize(2);
+    app.tabs[0].id = 1;
+    app.tabs[1].id = 2;
+    app.tabs[1].path = "extra.md";
+    lay();
+
+    check(chromeTopHeight(app) == topStripChrome,
+          "the chrome height is the same in both placements");
+    check(documentContentTop(app) == topStripContentTop,
+          "the document content top is the same in both placements");
+    check(!app.headings.empty() && app.headings[0].y == topStripHeadingY,
+          "the first heading keeps its y when the strip moves to the side");
+
+    // Only the horizontal metrics may differ, and only by the rail width
+    check(documentViewportX(app) == topStripViewportX + leftTabsRailWidth(app),
+          "the rail shifts the viewport right by its own width");
+    check(documentViewportWidth(app) < topStripViewportW,
+          "the rail narrows the viewport");
+}
+
 int runSidePanelTests() {
+    chromeTopIsPlacementIndependent();
     namespace fs = std::filesystem;
     wchar_t exe[MAX_PATH]{};
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
