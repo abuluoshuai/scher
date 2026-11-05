@@ -1642,6 +1642,14 @@ inline bool leftTabsRailShown(const App& app) {
            (app.tabs.size() > 1 || (app.forceTabStrip && !app.tabs.empty()));
 }
 
+// Left edge of the editor's tool rail. With the tab rail on the left the
+// tool rail moves out of its column and sits right beside it, so the rail's
+// own rows keep their full width and the formatting buttons stay reachable.
+inline float editRailX(const App& app) {
+    return leftTabsRailShown(app) ? leftTabsRailWidth(app) : 0.0f;
+}
+
+
 // Clamp the displayed widths together, without changing saved preferences
 // when a window shrinks. Keep room for the document even with both panels open.
 inline SidePanelWidths sidePanelWidths(const App& app) {

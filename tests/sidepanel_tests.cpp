@@ -446,6 +446,8 @@ void editorTextClearsTheRail() {
           "the text starts right of the chrome stack and the gutter");
     check(editorChromeLeft(app) == dpi(app, 48.0f),
           "without the rail the stack ends at the tool rail");
+    check(editRailX(app) == 0.0f,
+          "without the rail the tool rail stays at the left edge");
 
     // Left rail: the text must clear the whole rail
     app.tabsOnLeft = true;
@@ -459,6 +461,15 @@ void editorTextClearsTheRail() {
           "the line text starts right of the tab rail, not under it");
     check(railStart == editorChromeLeft(app) + editorGutterWidth(app),
           "the text origin still adds exactly the gutter");
+
+    // The tool rail itself moved out of the tab rail's column: it starts at
+    // the rail's right edge, and the text clears both of them
+    check(editRailX(app) == railW,
+          "the tool rail starts at the tab rail's right edge");
+    check(editorChromeLeft(app) == editRailX(app) + dpi(app, 48.0f),
+          "the left stack is the rail plus the tool rail");
+    check(railStart > railW + dpi(app, 48.0f),
+          "the text sits right of the tool rail, not beside it");
 
     // The wrapped-line budget must not count the rail's width as usable
     const float maxW = editorTextMaxWidth(app);

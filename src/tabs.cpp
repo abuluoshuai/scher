@@ -421,10 +421,9 @@ VertMetrics vertMetrics(const App& app) {
     v.gutterW = dpi(app, 4.0f);
     v.rowH = dpi(app, 34.0f);
     v.padX = dpi(app, 12.0f);
-    // In the editor the tool rail occupies the left edge of this column;
-    // the tab rows start beside it instead of underneath it
-    v.rowX0 = editRailWidth(app) > 0.0f ? editRailWidth(app) + dpi(app, 1.0f)
-                                        : 0.0f;
+    // The tool rail now sits right of this column, so the rows own its full
+    // width in every mode (the small inset below keeps them off the edge)
+    v.rowX0 = 0.0f;
     v.listTop = chromeTopHeight(app);
     // The new-tab row is tab-shaped, so the list reserves its height
     v.plusH = v.rowH;

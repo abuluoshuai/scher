@@ -1860,7 +1860,7 @@ void handleContextMenu(App& app, HWND hwnd, LPARAM lParam) {
     // Preserve the selection on an inside right-click (#230); otherwise
     // move the caret so INSERT entries drop their Markdown at that point.
     if (app.editMode && !app.confirmExitPending &&
-        !fromKeyboard && (float)pt.x >= editRailWidth(app) &&
+        !fromKeyboard && (float)pt.x >= editRailX(app) + editRailWidth(app) &&
         (float)pt.x < editorPaneWidth(app)) {
         openEditCtxMenu(app, hwnd, (float)pt.x, (float)pt.y);
         InvalidateRect(hwnd, nullptr, FALSE);

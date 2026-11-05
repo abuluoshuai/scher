@@ -171,12 +171,15 @@ void renderEditRail(App& app) {
                                 ? D2D1::ColorF(0.05f, 0.08f, 0.15f, 1.0f)
                                 : D2D1::ColorF(1.0f, 0.97f, 0.95f, 1.0f);
 
+    // The tool rail sits right of the vertical tab rail when that is on the
+    // left; x0 carries that offset so everything below keeps 0-based maths.
+    const float x0 = editRailX(app);
     app.renderTarget->PushAxisAlignedClip(
-        D2D1::RectF(0, 0, railW, H), D2D1_ANTIALIAS_MODE_ALIASED);
+        D2D1::RectF(x0, 0, x0 + railW, H), D2D1_ANTIALIAS_MODE_ALIASED);
     D2D1_MATRIX_3X2_F prev;
     app.renderTarget->GetTransform(&prev);
-    app.renderTarget->SetTransform(D2D1::Matrix3x2F::Translation(-slide, 0) *
-                                   prev);
+    app.renderTarget->SetTransform(
+        D2D1::Matrix3x2F::Translation(x0 - slide, 0) * prev);
 
     app.brush->SetColor(railBg);
     app.renderTarget->FillRectangle(D2D1::RectF(0, 0, railW, H), app.brush);
@@ -185,8 +188,8 @@ void renderEditRail(App& app) {
         D2D1::RectF(railW - 1.0f, 0, railW, H), app.brush);
 
     auto addHit = [&](D2D1_RECT_F r, int id) {
-        r.left -= slide;
-        r.right -= slide;
+        r.left += x0 - slide;
+        r.right += x0 - slide;
         app.editRailHits.push_back({r, id});
     };
     auto sep = [&](float y) {
@@ -335,7 +338,9 @@ int editRailHitAt(const App& app, float x, float y) {
 }
 
 bool editRailMouseDown(App& app, HWND hwnd, int x, int y) {
-    if (!app.editMode || (float)x >= editRailWidth(app)) return false;
+    const float x0 = editRailX(app);
+    if (!app.editMode || (float)x < x0 || (float)x >= x0 + editRailWidth(app))
+        return false;
     int hit = editRailHitAt(app, (float)x, (float)y);
     if (hit != 0) {
         editRailInvoke(app, hwnd, hit);
@@ -345,14 +350,14 @@ bool editRailMouseDown(App& app, HWND hwnd, int x, int y) {
 
 bool editRailMouseMove(App& app, HWND hwnd, int x, int y) {
     if (!app.editMode) return false;
-    int hit = (float)x < editRailWidth(app)
-                  ? editRailHitAt(app, (float)x, (float)y)
-                  : 0;
+    const float x0 = editRailX(app);
+    const bool overRail = (float)x >= x0 && (float)x < x0 + editRailWidth(app);
+    int hit = overRail ? editRailHitAt(app, (float)x, (float)y) : 0;
     if (hit != app.editRailHover) {
         app.editRailHover = hit;
         InvalidateRect(hwnd, nullptr, FALSE);
     }
-    return (float)x < editRailWidth(app);
+    return overRail;
 }
 
 // --- Raw editor insert menu (design t9) ----------------------------------
@@ -430,7 +435,7 @@ void openEditRailFlyout(App& app, HWND hwnd, int sub) {
     }
     app.editCtxOpen = true;
     app.editCtxRailOnly = true;
-    app.editCtxX = editRailWidth(app) + dpi(app, 10.0f);
+    app.editCtxX = editRailX(app) + editRailWidth(app) + dpi(app, 10.0f);
     app.editCtxY = anchorY;
     app.editCtxHover = 0;
     app.editCtxSub = sub;

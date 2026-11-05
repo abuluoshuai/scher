@@ -68,13 +68,11 @@ float editorTextMaxWidth(const App& app) {
                                padding * 2.0f);
 }
 
-// Right edge of the left stack: the vertical tab rail when it sits on the
-// left, otherwise the editor's own tool rail. The tool rail paints inside the
-// rail's column when both are up, so the stack ends at the rail width.
+// Right edge of the left stack: the tab rail (when it sits on the left), then
+// the editor's tool rail beside it. editRailX already carries the rail's
+// width, so this is simply where the tool rail ends.
 float editorChromeLeft(const App& app) {
-    float toolRail = dpi(app, 48.0f);
-    if (!leftTabsRailShown(app)) return toolRail;
-    return std::max(toolRail, leftTabsRailWidth(app));
+    return editRailX(app) + dpi(app, 48.0f);
 }
 
 // Left edge of the line text: right of that stack plus the gutter (t11).
