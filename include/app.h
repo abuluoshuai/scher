@@ -1670,7 +1670,8 @@ inline float folderBrowserPanelWidth(const App& app) { return sidePanelWidths(ap
 inline float tocPanelWidth(const App& app) { return sidePanelWidths(app).toc; }
 
 inline float documentViewportX(const App& app) {
-    if (app.editMode && app.editorReadingPreview) return 0;
+    if (app.editMode && app.editorReadingPreview)
+        return leftTabsRailShown(app) ? leftTabsRailWidth(app) : 0.0f;
     if (!app.editMode) {
         // Side panels push the content aside instead of covering it; the
         // shift follows the panel's slide-in animation. A right-docked TOC

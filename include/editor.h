@@ -96,4 +96,11 @@ void rebuildLineStarts(App& app);
 size_t editorTopVisibleLine(App& app);
 std::string toUtf8(const std::wstring& wstr);
 
+// Left edge of the editor's left stack (tab rail when it sits on the left,
+// otherwise the tool rail) and of the line text itself, which adds the
+// line-number gutter. Every screen-x <-> column mapping goes through these.
+float editorChromeLeft(const App& app);
+float editorTextStartX(const App& app);
+float editorTextMaxWidth(const App& app);
+
 #endif // TINTA_EDITOR_H

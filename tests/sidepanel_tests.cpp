@@ -1,5 +1,6 @@
 #include "sidepanels.h"
 #include "d2d_init.h"
+#include "editor.h"
 #include "file_utils.h"
 #include "input.h"
 #include "overlays.h"
@@ -418,7 +419,61 @@ void chromeTopIsPlacementIndependent() {
           "the rail narrows the viewport");
 }
 
+// Editing with the tab rail on the left: the rail paints over the first
+// 200-odd px of the window, so the editor's text has to start to the right of
+// it. The origin used to be a hard-coded tool-rail width, which put the first
+// words of every line under the rail.
+void editorTextClearsTheRail() {
+    auto state = std::make_unique<App>();
+    App& app = *state;
+    if (!initD2D(app)) { check(false, "d2d initializes for the editor origin test"); return; }
+    app.width = 1050;
+    app.height = 900;
+    app.contentScale = 1.0f;
+    app.editMode = true;
+    app.editorShowPreview = false;
+    app.editRailAnim = 1.0f;
+    applyTheme(app, 0);
+    updateTextFormats(app);
+
+    // Top strip: the tool rail plus the gutter, as before
+    app.tabsOnLeft = false;
+    app.tabs.resize(1);
+    app.tabs[0].id = 1;
+    app.activeTab = 0;
+    const float topStripStart = editorTextStartX(app);
+    check(topStripStart == editorChromeLeft(app) + editorGutterWidth(app),
+          "the text starts right of the chrome stack and the gutter");
+    check(editorChromeLeft(app) == dpi(app, 48.0f),
+          "without the rail the stack ends at the tool rail");
+
+    // Left rail: the text must clear the whole rail
+    app.tabsOnLeft = true;
+    app.tabs.resize(2);
+    app.tabs[1].id = 2;
+    app.tabs[1].path = "second.md";
+    const float railW = leftTabsRailWidth(app);
+    const float railStart = editorTextStartX(app);
+    check(leftTabsRailShown(app), "the rail is up in this placement");
+    check(railStart >= railW,
+          "the line text starts right of the tab rail, not under it");
+    check(railStart == editorChromeLeft(app) + editorGutterWidth(app),
+          "the text origin still adds exactly the gutter");
+
+    // The wrapped-line budget must not count the rail's width as usable
+    const float maxW = editorTextMaxWidth(app);
+    check(maxW > 0.0f, "there is text width available");
+    check(railStart + maxW <= editorPaneWidth(app),
+          "text and gutter fit inside the pane right of the rail");
+
+    // Reading preview of the same mode draws the document beside the rail
+    app.editorReadingPreview = true;
+    check(documentViewportX(app) >= railW,
+          "the reading preview starts beside the tab rail too");
+}
+
 int runSidePanelTests() {
+    editorTextClearsTheRail();
     chromeTopIsPlacementIndependent();
     namespace fs = std::filesystem;
     wchar_t exe[MAX_PATH]{};

@@ -60,19 +60,31 @@ static std::wstring fromUtf8(const std::string& str) {
 // math must go through DirectWrite hit testing instead of multiplying a
 // column index by a fixed character width.
 
-// Width available for line text in the editor pane (after the rail, the
-// slim line-number gutter, and padding)
-static float editorTextMaxWidth(const App& app) {
-    float chrome = dpi(app, 48.0f) + editorGutterWidth(app);
+// Width available for line text in the editor pane (after the left stack,
+// the slim line-number gutter, and padding)
+float editorTextMaxWidth(const App& app) {
     float padding = dpi(app, 8.0f);
-    return std::max(10.0f, editorPaneWidth(app) - chrome - padding * 2.0f);
+    return std::max(10.0f, editorPaneWidth(app) - editorTextStartX(app) -
+                               padding * 2.0f);
 }
 
-// Left edge of the line text: right of the rail column and the in-editor
-// line-number gutter (design t11)
-static float editorTextX(const App& app) {
-    return dpi(app, 48.0f) + editorGutterWidth(app);
+// Right edge of the left stack: the vertical tab rail when it sits on the
+// left, otherwise the editor's own tool rail. The tool rail paints inside the
+// rail's column when both are up, so the stack ends at the rail width.
+float editorChromeLeft(const App& app) {
+    float toolRail = dpi(app, 48.0f);
+    if (!leftTabsRailShown(app)) return toolRail;
+    return std::max(toolRail, leftTabsRailWidth(app));
 }
+
+// Left edge of the line text: right of that stack plus the gutter (t11).
+// Everything that maps between screen x and text columns goes through this,
+// so the tab rail can never paint over the first words of a line.
+float editorTextStartX(const App& app) {
+    return editorChromeLeft(app) + editorGutterWidth(app);
+}
+
+static float editorTextX(const App& app) { return editorTextStartX(app); }
 
 static IDWriteTextLayout* createEditorLineLayout(App& app, size_t lineStart, size_t lineLen) {
     if (!app.dwriteFactory || !app.editorTextFormat || lineLen == 0) return nullptr;
@@ -3753,7 +3765,7 @@ static void editorDrawLineNumber(App& app, size_t lineIdx, float lineY,
     int len = swprintf_s(num, _countof(num), L"%u",
                          (unsigned)(lineIdx + 1));
     if (len <= 0) return;
-    float railW = dpi(app, 48.0f);
+    float railW = editorChromeLeft(app);
     D2D1_COLOR_F c = isCaretLine ? app.theme.accent : app.theme.text;
     c.a = isCaretLine ? 0.8f : 0.3f;
     app.brush->SetColor(c);
@@ -3772,7 +3784,8 @@ static void editorFillCaretLine(App& app, float lineY, float rowsHeight,
     c.a = 0.08f;
     app.brush->SetColor(c);
     app.renderTarget->FillRectangle(
-        D2D1::RectF(dpi(app, 48.0f), lineY, editorWidth, lineY + rowsHeight),
+        D2D1::RectF(editorChromeLeft(app), lineY, editorWidth,
+                    lineY + rowsHeight),
         app.brush);
 }
 
