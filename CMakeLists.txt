@@ -151,6 +151,13 @@ set(RESOURCES
     resources/scher.rc
 )
 
+# windres reads the icon through the .rc, and CMake does not see that link on
+# its own: swapping resources/scher.ico used to leave the old icon baked in
+# until the .rc was touched or the build directory wiped. Declare the icon as
+# a dependency of the resource object.
+set_source_files_properties(resources/scher.rc PROPERTIES
+    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/resources/scher.ico")
+
 # Main executable (target keeps the upstream name so sources need no churn;
 # the shipped binary is scher.exe)
 add_executable(tinta WIN32 ${SOURCES} ${HEADERS} ${RESOURCES})
