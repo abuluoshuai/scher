@@ -2822,12 +2822,92 @@ void handleEditorKeyDown(App& app, HWND hwnd, WPARAM wParam) {
     }
 }
 
-// Alt+Up/Down move lines, Ctrl+Alt+Up/Down add carets (#251). Called for
-// WM_SYSKEYDOWN, and ahead of the AltGr guard for WM_KEYDOWN: arrows type no
-// character, so that guard has nothing to protect for them.
+// Alt+Shift+Up/Down duplicate the selected lines above/below, VSCode style.
+// Each caret's line block is copied in place; the selection (if any) moves to
+// the copy so repeated presses keep cloning the same lines.
+static bool editorDuplicateLines(App& app, bool down) {
+    std::vector<App::EditorCaret> carets = editorAllCarets(app);
+    struct Block { size_t first, last; };
+    std::vector<Block> blocks;
+    for (const auto& caret : carets) {
+        const size_t start = caretStart(caret), end = caretEnd(caret);
+        Block block{getLineFromPos(app, start), getLineFromPos(app, end)};
+        // A selection ending at a line start does not take that line along
+        if (end > start && block.last > block.first &&
+            end == app.editorLineStarts[block.last]) {
+            block.last--;
+        }
+        blocks.push_back(block);
+    }
+    std::sort(blocks.begin(), blocks.end(),
+              [](const Block& a, const Block& b) { return a.first < b.first; });
+    std::vector<Block> merged;
+    for (const Block& block : blocks) {
+        if (!merged.empty() && block.first <= merged.back().last + 1) {
+            merged.back().last = std::max(merged.back().last, block.last);
+        } else {
+            merged.push_back(block);
+        }
+    }
+
+    UndoGroupScope group(app);
+    const size_t primary = carets.size() - 1;
+    const size_t cursorBefore = app.editorCursorPos;
+    // Duplicating down past a last line that carries no newline needs one
+    // between the original and the copy, or they would glue together. The
+    // file keeps its (new) trailing newline.
+    if (down && !app.editorText.empty() && app.editorText.back() != L'\n' &&
+        merged.back().last + 1 >= app.editorLineStarts.size()) {
+        pushReplaceUndo(app, app.editorText.size(), L"", L"\n",
+                        cursorBefore, app.editorText.size() + 1);
+        app.editorText += L"\n";
+        rebuildLineStarts(app);
+    }
+
+    // Insertions only shift positions after them, so collect them first and
+    // apply bottom-up: earlier inserts never disturb later offsets.
+    struct Insert { size_t dest; std::wstring text; };
+    std::vector<Insert> insertions;
+    for (auto it = merged.rbegin(); it != merged.rend(); ++it) {
+        const Block& block = *it;
+        const size_t blockStart = app.editorLineStarts[block.first];
+        const size_t blockEnd = getLineEnd(app, block.last);
+        const std::wstring blockText =
+            app.editorText.substr(blockStart, blockEnd - blockStart);
+        const size_t dest = down ? blockEnd + 1 : blockStart;
+        insertions.push_back({dest, blockText + L"\n"});
+    }
+    for (const Insert& ins : insertions) {
+        pushReplaceUndo(app, ins.dest, L"", ins.text, cursorBefore,
+                        carets[primary].pos);
+        app.editorText.insert(ins.dest, ins.text);
+    }
+    rebuildLineStarts(app);
+    // An insertion before a caret pushes that caret back by the inserted
+    // length, whichever direction the duplicate went. Carets at or above the
+    // insertion point stay put, so Copy Down keeps the caret on the original
+    // line and Copy Up lands it on the copy at the same column.
+    for (const Insert& ins : insertions) {
+        const ptrdiff_t shift = (ptrdiff_t)ins.text.size();
+        for (auto& caret : carets) {
+            if (caret.pos >= ins.dest)
+                caret.pos = (size_t)((ptrdiff_t)caret.pos + shift);
+            if (caret.anchor >= ins.dest)
+                caret.anchor = (size_t)((ptrdiff_t)caret.anchor + shift);
+        }
+    }
+    for (auto& caret : carets) caret.desiredCol = -1;
+    editorStoreCarets(app, std::move(carets), primary);
+    return true;
+}
+
+// Alt+Up/Down move lines, Ctrl+Alt+Up/Down add carets (#251), Alt+Shift+
+// Up/Down duplicate them. Called for WM_SYSKEYDOWN, and ahead of the AltGr
+// guard for WM_KEYDOWN: arrows type no character, so that guard has nothing
+// to protect for them.
 bool editorAltArrowKey(App& app, HWND hwnd, WPARAM wParam) {
     if (wParam != VK_UP && wParam != VK_DOWN) return false;
-    if (!(GetKeyState(VK_MENU) & 0x8000) || (GetKeyState(VK_SHIFT) & 0x8000)) return false;
+    if (!(GetKeyState(VK_MENU) & 0x8000)) return false;
     if (!sourceEditorHasFocus(app) || app.confirmExitPending || app.createRefPending ||
         app.editCtxOpen || app.showSettings || app.showHelp || app.showThemeChooser ||
         app.showThemeEditor || app.showShortcutEditor || app.showPrintPreview ||
@@ -2835,9 +2915,13 @@ bool editorAltArrowKey(App& app, HWND hwnd, WPARAM wParam) {
         return false;
     }
     const bool down = wParam == VK_DOWN;
-    if (GetKeyState(VK_CONTROL) & 0x8000) {
+    const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    if (ctrl && !shift) {
         editorAddCaretVertical(app, down);
-    } else if (editorMoveLines(app, down)) {
+    } else if (shift && !ctrl) {
+        if (editorDuplicateLines(app, down)) scheduleReparse(app);
+    } else if (!shift && editorMoveLines(app, down)) {
         scheduleReparse(app);
     }
     resetCursorBlink(app);

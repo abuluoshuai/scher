@@ -81,6 +81,12 @@ std::vector<size_t> carets(const App& app) {
     return positions;
 }
 
+// Alt+Shift+arrows arrive the same way, with Shift added to the thread state
+bool altShiftArrow(App& app, unsigned vk) {
+    bool handled = false;
+    withKeys({false, true, true}, [&] { handled = editorAltArrowKey(app, app.hwnd, vk); });
+    return handled;
+}
 void moveLines(App& app) {
     setText(app, L"one\ntwo\nthree", 5);
     check(altArrow(app, VK_UP) && app.editorText == L"two\none\nthree" && app.editorCursorPos == 1,
@@ -121,6 +127,72 @@ void moveLines(App& app) {
     check(app.editorText == L"2\n3\n1\n4", "neighbouring caret lines move as one block");
     app.editorReadingPreview = true;
     check(!altArrow(app, VK_UP), "Alt+Up belongs to the source editor only");
+    app.editorReadingPreview = false;
+}
+
+void duplicateLines(App& app) {
+    // Down copies the caret line below; VSCode keeps the caret on the copy
+    setText(app, L"one\ntwo\nthree", 0);
+    check(altShiftArrow(app, VK_DOWN) && app.editorText == L"one\none\ntwo\nthree",
+          "Alt+Shift+Down copies the caret line below it");
+    check(app.editorCursorPos == 0, "Copy Down leaves the caret on the original line");
+
+    // Up copies the line above the caret's line (inserted before it)
+    setText(app, L"one\ntwo\nthree", 5);
+    check(altShiftArrow(app, VK_UP) && app.editorText == L"one\ntwo\ntwo\nthree",
+          "Alt+Shift+Up copies the caret line above it");
+    check(app.editorCursorPos == 9, "Copy Up moves the caret into the copy at the same column");
+
+    // A multi-line selection duplicates as one block
+    setText(app, L"one\ntwo\nthree", 0);
+    select(app, 0, 7);
+    check(altShiftArrow(app, VK_DOWN) && app.editorText == L"one\ntwo\none\ntwo\nthree",
+          "a selected block duplicates below itself");
+    check(app.editorHasSelection && app.editorSelStart == 0 && app.editorSelEnd == 7,
+          "the selection stays on the original block");
+
+    // Repeated presses keep cloning (VSCode clones the caret line again)
+    setText(app, L"a\nb", 0);
+    altShiftArrow(app, VK_DOWN);
+    altShiftArrow(app, VK_DOWN);
+    check(app.editorText == L"a\na\na\nb", "repeating Alt+Shift+Down keeps cloning");
+
+    // One Ctrl+Z removes one duplication at a time
+    key(app, 'Z', {true});
+    check(app.editorText == L"a\na\nb", "one Ctrl+Z undoes one duplication");
+
+    // The first line has nothing above it: Alt+Shift+Up on line 0 is a no-op
+    setText(app, L"one\ntwo", 0);
+    check(altShiftArrow(app, VK_UP) && app.editorText == L"one\none\ntwo",
+          "Alt+Shift+Up on the first line duplicates it above itself");
+    check(app.editorCursorPos == 4, "the caret lands on the copy at the same column");
+
+    // A file without a trailing newline cannot grow downward cleanly
+    setText(app, L"a\nb", 3);
+    check(altShiftArrow(app, VK_DOWN) && app.editorText == L"a\nb\nb\n",
+          "duplicating the last line appends the newline it needs");
+    check(app.editorCursorPos == 3, "the caret stays at its column in the original");
+
+    // With one it works and stays out of the previous line
+    setText(app, L"a\nb\n", 2);
+    check(altShiftArrow(app, VK_DOWN) && app.editorText == L"a\nb\nb\n",
+          "duplicating down with a trailing newline appends the copy");
+
+    // Multi-caret: each caret's line duplicates, blocks processed bottom-up
+    setText(app, L"1\n2\n3\n4\n5", 0);
+    addCaret(app, 4, 4);
+    check(altShiftArrow(app, VK_DOWN) &&
+              app.editorText == L"1\n1\n2\n3\n3\n4\n5",
+          "every caret's line duplicates in place");
+    check(carets(app) == std::vector<size_t>({0, 6}),
+          "each caret stays on its original line");
+    key(app, 'Z', {true});
+    check(app.editorText == L"1\n2\n3\n4\n5",
+          "the whole multi-caret duplication is one undo step");
+
+    // Reading preview owns the keys, same as Alt+Up/Down
+    app.editorReadingPreview = true;
+    check(!altShiftArrow(app, VK_DOWN), "Alt+Shift+Down belongs to the source editor only");
     app.editorReadingPreview = false;
 }
 
@@ -413,6 +485,7 @@ int runEditorFeatureTests() {
     for (bool wrap : {false, true}) {
         app.editorWordWrap = wrap;
         moveLines(app);
+        duplicateLines(app);
         wrapSelection(app);
         columnCarets(app);
         caretMotion(app);
