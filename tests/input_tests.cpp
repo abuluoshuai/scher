@@ -118,6 +118,20 @@ void settingsDismissal() {
     updateTextFormats(app);
     open();
     const auto panel = settingsPanelRect(app);
+    // Switching sections in the left rail must not resize the panel: one
+    // shared height for all four sections keeps it from jumping.
+    {
+        const D2D1_RECT_F base = panel;
+        for (int section = 0; section < 4; ++section) {
+            open(section);
+            const D2D1_RECT_F now = settingsPanelRect(app);
+            check(std::abs((now.bottom - now.top) -
+                           (base.bottom - base.top)) < 0.5f &&
+                  std::abs(now.top - base.top) < 0.5f,
+                  "the settings panel keeps one height across sections");
+        }
+        open(0);
+    }
     // A dropdown row outside the panel is still part of the dialog.
     app.settingsLangOpen = true;
     app.settingsHits.push_back({D2D1::RectF(panel.left, panel.bottom+4, panel.left+100, panel.bottom+30), SET_LANG_PICK_BASE});
