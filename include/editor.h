@@ -108,4 +108,8 @@ float editorTextMaxWidth(const App& app);
 // that gave the document its real path.
 void editorRelocatePastedImages(App& app);
 
+// Rewrites staged images/pasted-*.png links to the saved document's names;
+// called once the path exists and before the first write.
+void editorRewritePastedLinks(App& app);
+
 #endif // TINTA_EDITOR_H

@@ -497,6 +497,7 @@ void pasteImageRelocation() {
     wchar_t tmp[MAX_PATH];
     GetTempPathW(MAX_PATH, tmp);
     namespace fs = std::filesystem;
+    std::error_code ec;
 
     // A staged image + a link that already points at images/<name>
     const std::wstring staged = std::wstring(tmp) + L"scher-stage-img.png";
@@ -507,11 +508,12 @@ void pasteImageRelocation() {
         fwrite(pngHeader, 1, sizeof(pngHeader), f);
         fputc('x', f); fclose(f);
     }
-    app.editorPendingImages.push_back({staged, L"note-img-01.png"});
-    app.editorText = L"# Note\n\n![image](images/note-img-01.png)\n";
+    app.editorPendingImages.push_back({staged, L"pasted-img-01.png"});
+    app.editorText = L"# Note\n\n![image](images/pasted-img-01.png)\n";
 
     // Save the note into a fresh folder: this is the first real save
     const std::wstring dir = std::wstring(tmp) + L"scher-img-doc";
+    fs::remove_all(dir, ec);  // a previous run's images must not shift numbering
     fs::create_directories(dir);
     app.currentFile = toUtf8(dir + L"\\note.md");
     app.editorDirty = true;
@@ -519,11 +521,16 @@ void pasteImageRelocation() {
     check(!app.editorDirty, "the note saves");
 
     const std::wstring moved = dir + L"\\images\\note-img-01.png";
-    check(fs::exists(fs::path(moved)), "the staged image moves into images/");
+    check(fs::exists(fs::path(dir + L"\\images\\note-img-01.png")),
+          "the staged image is renamed after the saved document");
+    check(!fs::exists(fs::path(dir + L"\\images\\pasted-img-01.png")),
+          "no pasted- name survives the save");
     check(!fs::exists(fs::path(staged)), "the staged copy leaves the drafts folder");
     check(app.editorPendingImages.empty(), "the pending list clears");
     check(app.editorText.find(L"images/note-img-01.png") != std::wstring::npos,
-          "the link keeps its images/ prefix without any rewrite");
+          "the buffer link is rewritten to the final name");
+    check(app.editorText.find(L"pasted-img-01.png") == std::wstring::npos,
+          "no staged name remains in the buffer");
 
     // Saving again must not re-move anything
     app.editorDirty = true;
@@ -533,14 +540,19 @@ void pasteImageRelocation() {
     // A name collision renames instead of overwriting
     const std::wstring staged2 = std::wstring(tmp) + L"scher-stage-img2.png";
     { FILE* f = _wfopen(staged2.c_str(), L"wb"); if (f) { fputc('y', f); fclose(f); } }
-    app.editorPendingImages.push_back({staged2, L"note-img-01.png"});
+    app.editorPendingImages.push_back({staged2, L"pasted-img-01.png"});
+    app.editorText += L"\n![image](images/pasted-img-01.png)\n";
     app.editorDirty = true;
     saveEditorFile(app, app.hwnd);
-    check(fs::exists(fs::path(dir + L"\\images\\note-img-01-1.png")),
-          "a colliding image saves under a new name");
-    std::error_code ec;
+    // note-img-01.png exists already, so the second staged image becomes -02
+    check(fs::exists(fs::path(dir + L"\\images\\note-img-02.png")),
+          "a second staged image takes the next number");
     std::uintmax_t size1 = fs::file_size(fs::path(moved), ec);
-    check(!ec && size1 == 9, "the original image is not overwritten");
+    check(!ec && size1 == 9, "the first image is not overwritten");
+    check(app.editorText.find(L"images/note-img-02.png") != std::wstring::npos,
+          "the second link points at note-img-02.png");
+    check(app.editorText.find(L"images/pasted-img-01.png") == std::wstring::npos,
+          "no staged link survives in the buffer");
     check(app.editorPendingImages.empty(), "the pending list clears again");
 
     DestroyWindow(app.hwnd);

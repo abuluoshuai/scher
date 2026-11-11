@@ -1951,27 +1951,31 @@ void editorRelocatePastedImages(App& app) {
     if (app.editorPendingImages.empty() || app.currentFile.empty()) return;
     namespace fs = std::filesystem;
     fs::path doc(toWide(app.currentFile));
+    const std::wstring docStem = doc.stem().wstring();
     fs::path imagesDir = doc.parent_path() / "images";
     std::error_code ec;
     fs::create_directories(imagesDir, ec);
     if (ec) return;
-    for (const auto& [tempPath, fileName] : app.editorPendingImages) {
-        fs::path from(tempPath);
-        fs::path to = imagesDir / fileName;
-        if (fs::exists(to, ec)) {
-            // Keep both: never overwrite an image that is already there
-            fs::path stem = to.stem();
-            fs::path ext = to.extension();
-            for (int i = 1; i < 1000; i++) {
-                wchar_t suffix[24];
-                swprintf_s(suffix, _countof(suffix), L"-%d", i);
-                fs::path candidate = imagesDir / (stem.wstring() + suffix + ext.wstring());
-                if (!fs::exists(candidate, ec)) { to = candidate; break; }
-            }
+
+    // Staged pasted-img-NN.png files take the document's own name, so two
+    // notes sharing a folder never collide over their screenshots.
+    struct Moved { std::wstring from, to; };
+    std::vector<Moved> moves;
+    for (const auto& pending : app.editorPendingImages) {
+        fs::path from(pending.stagedPath);
+        std::wstring finalName;
+        for (int i = 1; i < 100; i++) {
+            wchar_t suffix[24];
+            swprintf_s(suffix, _countof(suffix), L"-img-%02d.png", i);
+            std::wstring candidate = docStem + suffix;
+            fs::path p = imagesDir / candidate;
+            if (!fs::exists(p, ec)) { finalName = candidate; break; }
+            ec.clear();
         }
+        if (finalName.empty()) continue;
+        fs::path to = imagesDir / finalName;
         fs::rename(from, to, ec);
         if (ec) {
-            // Cross-volume moves fail with rename: copy + remove as fallback
             ec.clear();
             if (fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec)) {
                 ec.clear();
@@ -1979,10 +1983,49 @@ void editorRelocatePastedImages(App& app) {
             }
             if (ec) continue;
         }
+        moves.push_back({pending.stagedName, finalName});
     }
     app.editorPendingImages.clear();
-    // The links resolve into images/ now; the preview must pick them up
-    editorReparse(app);
+}
+
+// Rewrites images/pasted-img-NN.png links to the saved document's own names.
+// Runs after the path exists but before the first write, so the .md file is
+// born with its final links. Not undoable: it belongs to the save, not the
+// typing history.
+void editorRewritePastedLinks(App& app) {
+    if (app.editorPendingImages.empty()) return;
+    namespace fs = std::filesystem;
+    const std::wstring docStem =
+        fs::path(toWide(app.currentFile)).stem().wstring();
+    // Number from the first free slot in images/, matching the rename in
+    // editorRelocatePastedImages: a second staging batch must not point at
+    // names an earlier save already took.
+    fs::path imagesDir =
+        fs::path(toWide(app.currentFile)).parent_path() / "images";
+    std::error_code ec;
+    int next = 1;
+    auto taken = [&](int n) {
+        wchar_t suffix[24];
+        swprintf_s(suffix, _countof(suffix), L"-img-%02d.png", n);
+        return fs::exists(imagesDir / (docStem + suffix), ec);
+    };
+    std::wstring& text = app.editorText;
+    for (auto& pending : app.editorPendingImages) {
+        while (taken(next)) next++;
+        wchar_t suffix[24];
+        swprintf_s(suffix, _countof(suffix), L"-img-%02d.png", next);
+        std::wstring from = L"images/" + pending.stagedName;
+        std::wstring to = L"images/" + docStem + suffix;
+        if (from != to) {
+            for (size_t pos = text.find(from); pos != std::wstring::npos;
+                 pos = text.find(from, pos + to.size())) {
+                text.replace(pos, from.size(), to);
+            }
+            pending.stagedName = docStem + suffix;  // rename moves to this
+        }
+        next++;
+    }
+    rebuildLineStarts(app);
 }
 
 void saveEditorFile(App& app, HWND hwnd) {
@@ -1994,6 +2037,11 @@ void saveEditorFile(App& app, HWND hwnd) {
         // Untitled quick note: name it now; cancel keeps editing untitled
         if (!promptSaveAsPath(app, hwnd)) return;
     }
+    // Staged screenshots take the saved document's name and the links in the
+    // buffer follow, BEFORE the write: the .md on disk must carry the final
+    // links from its very first byte. Any save while images are staged is a
+    // first save for them, however the path came to exist.
+    editorRewritePastedLinks(app);
 
     std::string utf8 = toUtf8(app.editorText);
     if (!isPlainTextDocumentPath(app.currentFile) && !isMermaidDocumentPath(app.currentFile))
@@ -2687,7 +2735,10 @@ void handleEditorKeyDown(App& app, HWND hwnd, WPARAM wParam) {
                     std::error_code mk;
                     fs::create_directories(imagesDir, mk);
 
-                    // Fixed prefix so every pasted image sorts together
+                    // The document's own name prefixes every image, so two
+                    // notes in one folder can never overwrite each other's
+                    // screenshots. An untitled note uses "pasted" until the
+                    // first save renames both the files and the links.
                     std::wstring base = untitled
                         ? L"pasted" : (fs::path(toWide(app.currentFile))
                                            .stem().wstring());
