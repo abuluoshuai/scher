@@ -2898,12 +2898,15 @@ void renderSettingsOverlay(App& app) {
             std::wstring current = app.languageSetting < 0
                 ? std::wstring(tr(app, "settings.lang.auto"))
                 : std::wstring(languageNameAt(app.languageSetting));
-            current += L"  \x25BE";
+            // Label left-aligned, the arrow pinned to the box's right edge
             c = app.theme.text; c.a = 0.95f * anim;
             app.brush->SetColor(c);
             app.renderTarget->DrawText(current.c_str(), (UINT32)current.size(), fmt,
                 D2D1::RectF(box.left + dpi(app, 10.0f), box.top + dpi(app, 4.0f),
-                            box.right - dpi(app, 6.0f), box.bottom), app.brush);
+                            box.right - dpi(app, 16.0f), box.bottom), app.brush);
+            app.renderTarget->DrawText(L"\x25BE", 1, fmt,
+                D2D1::RectF(box.right - dpi(app, 18.0f), box.top + dpi(app, 4.0f),
+                            box.right - dpi(app, 5.0f), box.bottom), app.brush);
             app.settingsHits.push_back({box, SET_LANG_DROPDOWN});
 
             D2D1_RECT_F pen = D2D1::RectF(box.right + dpi(app, 8.0f), boxY,
@@ -2937,13 +2940,16 @@ void renderSettingsOverlay(App& app) {
                 : app.keyProfile == "custom" ? "settings.profile.custom"
                                              : "settings.profile.windows";
             std::wstring current = tr(app, profKey);
-            current += L"  \x25BE";
+            // Same anatomy as the language row: label left, arrow right
             c = app.theme.text;
             c.a = 0.95f * anim;
             app.brush->SetColor(c);
             app.renderTarget->DrawText(current.c_str(), (UINT32)current.size(), fmt,
                 D2D1::RectF(box.left + dpi(app, 10.0f), box.top + dpi(app, 4.0f),
-                            box.right - dpi(app, 6.0f), box.bottom), app.brush);
+                            box.right - dpi(app, 16.0f), box.bottom), app.brush);
+            app.renderTarget->DrawText(L"\x25BE", 1, fmt,
+                D2D1::RectF(box.right - dpi(app, 18.0f), box.top + dpi(app, 4.0f),
+                            box.right - dpi(app, 5.0f), box.bottom), app.brush);
             app.settingsHits.push_back({box, SET_KEYS_DROPDOWN});
 
             D2D1_RECT_F pen = D2D1::RectF(box.right + dpi(app, 8.0f), boxY,
