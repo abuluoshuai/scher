@@ -915,6 +915,12 @@ struct App {
     std::vector<HeadingInfo> headings;
     std::unordered_map<std::string, int> headingSlugCounts;
     std::unordered_map<std::string, float> footnoteAnchors;
+    // Images pasted while the document is still untitled: written under the
+    // config drafts folder as <tempname>.png, moved next to the document
+    // (into its images/ subfolder) on the first real save. The map is
+    // pending temp path -> final file name, and the links already in the
+    // text point at the final name, so nothing in the buffer changes.
+    std::vector<std::pair<std::wstring, std::wstring>> editorPendingImages;
     // <a id>/<a name> link targets and their document Y, in document order:
     // the first of a repeated id wins, as in a browser (#255)
     std::vector<std::pair<std::string, float>> htmlAnchors;

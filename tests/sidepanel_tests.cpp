@@ -483,7 +483,71 @@ void editorTextClearsTheRail() {
           "the reading preview starts beside the tab rail too");
 }
 
+// Pasted images of an untitled note stage in the drafts folder and move
+// into the saved document's images/ subfolder on the first save; the links
+// (written as images/<name> from the start) need no rewrite.
+void pasteImageRelocation() {
+    auto state = std::make_unique<App>();
+    App& app = *state;
+    app.hwnd = CreateWindowExW(0, L"STATIC", L"Paste image test", WS_POPUP,
+        0, 0, 1050, 900, nullptr, nullptr, nullptr, nullptr);
+    if (!app.hwnd || !initD2D(app)) { check(false, "window for image test"); return; }
+    app.width = 1050; app.height = 900;
+
+    wchar_t tmp[MAX_PATH];
+    GetTempPathW(MAX_PATH, tmp);
+    namespace fs = std::filesystem;
+
+    // A staged image + a link that already points at images/<name>
+    const std::wstring staged = std::wstring(tmp) + L"scher-stage-img.png";
+    {
+        const unsigned char pngHeader[8] = {0x89,'P','N','G',0x0d,0x0a,0x1a,0x0a};
+        FILE* f = _wfopen(staged.c_str(), L"wb");
+        if (!f) { check(false, "staged png writes"); return; }
+        fwrite(pngHeader, 1, sizeof(pngHeader), f);
+        fputc('x', f); fclose(f);
+    }
+    app.editorPendingImages.push_back({staged, L"note-img-01.png"});
+    app.editorText = L"# Note\n\n![image](images/note-img-01.png)\n";
+
+    // Save the note into a fresh folder: this is the first real save
+    const std::wstring dir = std::wstring(tmp) + L"scher-img-doc";
+    fs::create_directories(dir);
+    app.currentFile = toUtf8(dir + L"\\note.md");
+    app.editorDirty = true;
+    saveEditorFile(app, app.hwnd);
+    check(!app.editorDirty, "the note saves");
+
+    const std::wstring moved = dir + L"\\images\\note-img-01.png";
+    check(fs::exists(fs::path(moved)), "the staged image moves into images/");
+    check(!fs::exists(fs::path(staged)), "the staged copy leaves the drafts folder");
+    check(app.editorPendingImages.empty(), "the pending list clears");
+    check(app.editorText.find(L"images/note-img-01.png") != std::wstring::npos,
+          "the link keeps its images/ prefix without any rewrite");
+
+    // Saving again must not re-move anything
+    app.editorDirty = true;
+    saveEditorFile(app, app.hwnd);
+    check(fs::exists(fs::path(moved)), "the image stays put on later saves");
+
+    // A name collision renames instead of overwriting
+    const std::wstring staged2 = std::wstring(tmp) + L"scher-stage-img2.png";
+    { FILE* f = _wfopen(staged2.c_str(), L"wb"); if (f) { fputc('y', f); fclose(f); } }
+    app.editorPendingImages.push_back({staged2, L"note-img-01.png"});
+    app.editorDirty = true;
+    saveEditorFile(app, app.hwnd);
+    check(fs::exists(fs::path(dir + L"\\images\\note-img-01-1.png")),
+          "a colliding image saves under a new name");
+    std::error_code ec;
+    std::uintmax_t size1 = fs::file_size(fs::path(moved), ec);
+    check(!ec && size1 == 9, "the original image is not overwritten");
+    check(app.editorPendingImages.empty(), "the pending list clears again");
+
+    DestroyWindow(app.hwnd);
+}
+
 int runSidePanelTests() {
+    pasteImageRelocation();
     editorTextClearsTheRail();
     chromeTopIsPlacementIndependent();
     namespace fs = std::filesystem;

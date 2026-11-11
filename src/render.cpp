@@ -2,6 +2,7 @@
 #include "render.h"
 #include "file_utils.h"
 #include "inline_style.h"
+#include "settings.h"
 #include "utils.h"
 #include "syntax.h"
 #include "search.h"
@@ -2824,10 +2825,19 @@ static App::ImageEntry& getOrLoadImage(App& app, const std::string& src) {
             std::filesystem::path imgPath = basePath.parent_path() / wsrc;
             widePath = imgPath.wstring();
         } else {
-            // An untitled note has no folder of its own: relative images
-            // resolve against the launch folder, as they did while the
-            // process still worked there (#253)
-            widePath = (std::filesystem::path(launchDirectory()) / wsrc).wstring();
+            // An untitled note resolves its images from the drafts staging
+            // area first: pasted screenshots land there and move beside the
+            // document on the first save. Fall back to the launch folder for
+            // hand-written links, as before (#253).
+            std::filesystem::path staged =
+                std::filesystem::path(tintaConfigDir()) / "drafts" / wsrc;
+            std::error_code ec;
+            if (std::filesystem::exists(staged, ec)) {
+                widePath = staged.wstring();
+            } else {
+                widePath =
+                    (std::filesystem::path(launchDirectory()) / wsrc).wstring();
+            }
         }
     }
 

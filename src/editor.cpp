@@ -1943,6 +1943,48 @@ void renderQuickNoteEmptyState(App& app) {
     }
 }
 
+// Images pasted into an untitled note are staged in the drafts folder with
+// links already pointing at their final names. A save that gave the note a
+// real path moves each staged file into the document's images/ subfolder;
+// the buffer needs no rewrite because the links were final from the start.
+void editorRelocatePastedImages(App& app) {
+    if (app.editorPendingImages.empty() || app.currentFile.empty()) return;
+    namespace fs = std::filesystem;
+    fs::path doc(toWide(app.currentFile));
+    fs::path imagesDir = doc.parent_path() / "images";
+    std::error_code ec;
+    fs::create_directories(imagesDir, ec);
+    if (ec) return;
+    for (const auto& [tempPath, fileName] : app.editorPendingImages) {
+        fs::path from(tempPath);
+        fs::path to = imagesDir / fileName;
+        if (fs::exists(to, ec)) {
+            // Keep both: never overwrite an image that is already there
+            fs::path stem = to.stem();
+            fs::path ext = to.extension();
+            for (int i = 1; i < 1000; i++) {
+                wchar_t suffix[24];
+                swprintf_s(suffix, _countof(suffix), L"-%d", i);
+                fs::path candidate = imagesDir / (stem.wstring() + suffix + ext.wstring());
+                if (!fs::exists(candidate, ec)) { to = candidate; break; }
+            }
+        }
+        fs::rename(from, to, ec);
+        if (ec) {
+            // Cross-volume moves fail with rename: copy + remove as fallback
+            ec.clear();
+            if (fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec)) {
+                ec.clear();
+                fs::remove(from, ec);
+            }
+            if (ec) continue;
+        }
+    }
+    app.editorPendingImages.clear();
+    // The links resolve into images/ now; the preview must pick them up
+    editorReparse(app);
+}
+
 void saveEditorFile(App& app, HWND hwnd) {
     // The open table cell belongs in the save (#148)
     tableEditCommit(app);
@@ -2014,6 +2056,10 @@ void saveEditorFile(App& app, HWND hwnd) {
         app.frontmatterFirstSeen[frontmatterSeenKey(app)] = firstSeen;
         app.editorDirty = false;
         updateFileWriteTime(app);
+
+        // Staged untitled-note images move beside the document now that it
+        // has a real path (no-op when the note was saved all along)
+        editorRelocatePastedImages(app);
 
         // The saved buffer no longer needs its crash-recovery draft
         tabsInit(app);
@@ -2623,21 +2669,36 @@ void handleEditorKeyDown(App& app, HWND hwnd, WPARAM wParam) {
                     return;
                 }
                 std::wstring paste = editorGetClipboard(hwnd);
-                // A bitmap without text (a screenshot) saves as PNG beside
-                // the document and pastes as its markdown link
-                if (paste.empty() && !app.currentFile.empty() &&
-                    IsClipboardFormatAvailable(CF_BITMAP)) {
+                // A bitmap without text (a screenshot) becomes a PNG in the
+                // document's images/ subfolder and pastes as its markdown
+                // link. An untitled note stages the file in the drafts
+                // folder instead; the link already carries the final name,
+                // and the first save moves it into the real images/.
+                if (paste.empty() && IsClipboardFormatAvailable(CF_BITMAP)) {
                     namespace fs = std::filesystem;
-                    fs::path doc(toWide(app.currentFile));
-                    std::wstring stem = doc.stem().wstring();
+                    bool untitled = app.currentFile.empty();
+                    fs::path imagesDir;
+                    if (untitled) {
+                        imagesDir = fs::path(tintaConfigDir()) / "drafts";
+                    } else {
+                        imagesDir = fs::path(toWide(app.currentFile))
+                                        .parent_path() / "images";
+                    }
+                    std::error_code mk;
+                    fs::create_directories(imagesDir, mk);
+
+                    // Fixed prefix so every pasted image sorts together
+                    std::wstring base = untitled
+                        ? L"pasted" : (fs::path(toWide(app.currentFile))
+                                           .stem().wstring());
                     std::wstring name;
                     fs::path target;
                     for (int i = 1; i < 100; i++) {
                         wchar_t suffix[24];
                         swprintf_s(suffix, _countof(suffix),
                                    L"-img-%02d.png", i);
-                        std::wstring candidate = stem + suffix;
-                        fs::path p = doc.parent_path() / candidate;
+                        std::wstring candidate = base + suffix;
+                        fs::path p = imagesDir / candidate;
                         std::error_code ec;
                         if (!fs::exists(p, ec)) {
                             name = candidate;
@@ -2648,6 +2709,10 @@ void handleEditorKeyDown(App& app, HWND hwnd, WPARAM wParam) {
                     if (!name.empty() &&
                         clipboardImageToPngFile(app, hwnd,
                                                 target.wstring())) {
+                        if (untitled) {
+                            app.editorPendingImages.push_back(
+                                {target.wstring(), name});
+                        }
                         std::wstring linkName = name;
                         size_t sp = 0;  // spaces break the link target
                         while ((sp = linkName.find(L' ', sp)) !=
@@ -2655,7 +2720,9 @@ void handleEditorKeyDown(App& app, HWND hwnd, WPARAM wParam) {
                             linkName.replace(sp, 1, L"%20");
                             sp += 3;
                         }
-                        paste = L"![image](" + linkName + L")";
+                        // Links are relative to the document, images live in
+                        // images/ (or will, once the untitled note is saved)
+                        paste = L"![image](images/" + linkName + L")";
                     }
                 }
                 if (!paste.empty()) {

@@ -103,4 +103,9 @@ float editorChromeLeft(const App& app);
 float editorTextStartX(const App& app);
 float editorTextMaxWidth(const App& app);
 
+// Moves images pasted while the document was untitled (staged in the drafts
+// folder) into the saved document's images/ subfolder. Called after a save
+// that gave the document its real path.
+void editorRelocatePastedImages(App& app);
+
 #endif // TINTA_EDITOR_H
