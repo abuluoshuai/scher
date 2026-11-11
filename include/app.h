@@ -929,6 +929,10 @@ struct App {
     bool editorBoxSelecting = false;
     int editorBoxAnchorX = 0;
     int editorBoxAnchorY = 0;
+    // Box alignment is in pixel x (text-origin relative), not character
+    // columns: mixed CJK/ASCII lines have different column widths per row.
+    float editorBoxAnchorPixelX = 0.0f;
+    size_t editorBoxAnchorPos = 0;
     // <a id>/<a name> link targets and their document Y, in document order:
     // the first of a repeated id wins, as in a browser (#255)
     std::vector<std::pair<std::string, float>> htmlAnchors;

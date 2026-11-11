@@ -14,6 +14,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <cstdio>
 #include <vector>
 
 // Editor conveniences (#251), the word count (#240) and draft recovery
@@ -489,10 +490,10 @@ void boxSelection(App& app) {
     const float lineH = app.editorTextFormat->GetFontSize() * 1.5f;
     const int yLine0 = (int)(chromeTopHeight(app) + dpi(app, 8.0f) + lineH * 0.5f);
     const int yLine2 = yLine0 + (int)(lineH * 2.0f);
-    boxDown(95, yLine0);
-    check(app.editorBoxSelecting, "Alt+Shift+press starts a box selection");
-    boxMove(120, yLine2);
-    {
+        boxDown(95, yLine0);
+        check(app.editorBoxSelecting, "Alt+Shift+press starts a box selection");
+        boxMove(120, yLine2);
+        {
         std::cerr << "[box] carets=" << app.editorExtraCarets.size() << " spans=";
         for (const auto& c : app.editorExtraCarets)
             std::cerr << c.anchor << "-" << c.pos << " ";
@@ -558,6 +559,49 @@ void boxSelection(App& app) {
     app.editorReadingPreview = false;
 }
 
+// Mixed-width lines: the box aligns on pixel x, so every covered row gets
+// the same VISUAL rectangle even though the character counts differ
+// (VSCode behaviour; a column-count box would zigzag across CJK/ASCII).
+void boxSelectionPixelAlignment(App& app) {
+    fprintf(stderr, "[px] start\n"); fflush(stderr);
+    setText(app, L"1234\n\x5546\x52a1\x4e2a\x5fc3\x4e2d\nabcd\n", 0);
+    fprintf(stderr, "[px] text set\n"); fflush(stderr);  // 1234 / 商务心中 / abcd
+
+    auto boxDown = [&](int x, int y) {
+        withKeys({false, true, true}, [&] { handleEditorMouseDown(app, app.hwnd, x, y); });
+    };
+    auto boxMove = [&](int x, int y) {
+        withKeys({false, true, true}, [&] { handleEditorMouseMove(app, app.hwnd, x, y); });
+    };
+    auto boxUp = [&](int x, int y) { handleMouseUp(app, app.hwnd, 0, MAKELPARAM(x, y)); };
+
+    const float lineH = app.editorTextFormat->GetFontSize() * 1.5f;
+    const int yLine0 = (int)(chromeTopHeight(app) + dpi(app, 8.0f) + lineH * 0.5f);
+    const int yLine2 = yLine0 + (int)(lineH * 2.0f);
+    fprintf(stderr, "[px] down\n"); fflush(stderr);
+    boxDown(95, yLine0);
+    fprintf(stderr, "[px] moved\n"); fflush(stderr);
+    boxMove(130, yLine2);
+    fprintf(stderr, "[px] up\n"); fflush(stderr);
+    boxUp(130, yLine2);
+    fprintf(stderr, "[px] released, carets=%zu\n", app.editorExtraCarets.size()); fflush(stderr);
+    check(app.editorExtraCarets.size() == 3, "the mixed-width box still covers three rows");
+
+    // Rows align on pixel x: the ASCII row "1234" and the CJK row
+    // "商务心中" have different column widths, so a pixel rectangle picks
+    // DIFFERENT character counts per row. A column-count rectangle (the
+    // old behaviour) would pick the same count and zigzag visually.
+    size_t asciiSpan = 0, cjkSpan = 0;
+    for (const auto& caret : app.editorExtraCarets) {
+        size_t span = caret.pos - caret.anchor;
+        if (asciiSpan == 0) asciiSpan = span;
+        else if (cjkSpan == 0) cjkSpan = span;
+    }
+    std::cerr << "[box-pixel] ascii=" << asciiSpan << " cjk=" << cjkSpan << "\n";
+    check(cjkSpan < asciiSpan,
+          "the CJK row selects fewer characters at the same pixel width");
+}
+
 int runEditorFeatureTests() {
     auto state = std::make_unique<App>();
     App& app = *state;
@@ -578,7 +622,8 @@ int runEditorFeatureTests() {
         app.editorWordWrap = wrap;
         moveLines(app);
         duplicateLines(app);
-        boxSelection(app);
+                boxSelection(app);
+                boxSelectionPixelAlignment(app);
         wrapSelection(app);
         columnCarets(app);
         caretMotion(app);

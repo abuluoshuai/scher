@@ -3650,7 +3650,7 @@ void editorPositionImeWindow(App& app, HWND hwnd) {
 // point lands on. The box selection needs both per row, and editorPosFromClick
 // must keep its side effect (clearing the upstream caret memory).
 static void editorPointToLineCol(App& app, int x, int y, size_t& lineOut,
-                                 size_t& posOut) {
+                                 size_t& posOut, float* pixelXOut = nullptr) {
     lineOut = 0;
     posOut = 0;
     if (!app.editorTextFormat || app.editorLineStarts.empty()) return;
@@ -3678,6 +3678,7 @@ static void editorPointToLineCol(App& app, int x, int y, size_t& lineOut,
     size_t lineStart = app.editorLineStarts[line];
     size_t lineLen = getLineLength(app, line);
     posOut = lineStart;
+    if (pixelXOut) *pixelXOut = 0.0f;
     if (lineLen == 0) return;
 
     float adjustedX = (float)x - editorTextX(app);
@@ -3689,12 +3690,17 @@ static void editorPointToLineCol(App& app, int x, int y, size_t& lineOut,
     if (layout) {
         size_t position = lineStart;
         editorHitCaret(app, layout, adjustedX, localY, lineStart, lineLen, position);
+        // Pixel x of the caret placement: the box selection aligns on this,
+        // not on the character count (CJK and half-width glyphs differ in
+        // width, so column indices never line up across mixed lines).
+        if (pixelXOut) editorCaretXY(layout, position - lineStart, *pixelXOut, localY);
         layout->Release();
         posOut = position;
     } else {
         float charWidth = app.editorCharWidth > 0 ? app.editorCharWidth : app.editorTextFormat->GetFontSize() * 0.6f;
         size_t col = (size_t)std::max(0, (int)(adjustedX / charWidth + 0.5f));
         posOut = lineStart + std::min(col, lineLen);
+        if (pixelXOut) *pixelXOut = (float)std::min(col, lineLen) * charWidth;
     }
 }
 
@@ -3858,6 +3864,30 @@ void handleEditorMouseDown(App& app, HWND hwnd, int x, int y) {
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
+// Position on `line` at pixel offset `pixelX` from the text origin: the box
+// selection aligns every covered row at the anchor's pixel x, which keeps
+// mixed CJK/ASCII rows visually aligned the way VSCode's box select is.
+static size_t editorPosAtPixelX(App& app, size_t line, float pixelX) {
+    if (line >= app.editorLineStarts.size()) return 0;
+    size_t lineStart = app.editorLineStarts[line];
+    size_t lineLen = getLineLength(app, line);
+    if (lineLen == 0 || pixelX <= 0.0f) return lineStart;
+    IDWriteTextLayout* layout = createEditorLineLayout(app, lineStart, lineLen);
+    size_t pos = lineStart;
+    if (layout) {
+        // A tall localY stays inside the single-row layout: hit testing only
+        // reads the x here.
+        editorHitCaret(app, layout, pixelX, 1.0f, lineStart, lineLen, pos);
+        layout->Release();
+    } else {
+        float charWidth = app.editorCharWidth > 0 ? app.editorCharWidth
+            : (app.editorTextFormat ? app.editorTextFormat->GetFontSize() * 0.6f : 10.0f);
+        size_t col = (size_t)std::max(0, (int)(pixelX / charWidth + 0.5f));
+        pos = lineStart + std::min(col, lineLen);
+    }
+    return pos;
+}
+
 void handleEditorMouseUp(App& app, HWND, int, int) {
     if (app.editorScrollbarDragging) {
         app.editorScrollbarDragging = false;
@@ -3949,25 +3979,26 @@ void handleEditorMouseMove(App& app, HWND hwnd, int x, int y) {
         return;
     }
     if (app.editorBoxSelecting) {
-        // Extend the rectangle from the anchor corner to the cursor: each
-        // row between them gets one caret spanning the two columns.
-        size_t anchorLine = 0, anchorPos = 0, curLine = 0, curPos = 0;
+        // Extend the rectangle from the anchor corner to the cursor. Rows
+        // align on PIXEL x, not character columns: CJK and half-width glyphs
+        // have different widths, so a character-count rectangle zigzags
+        // across mixed lines where VSCode's stays a clean rectangle.
+        float anchorPixelX = 0.0f, curPixelX = 0.0f;
+        size_t anchorLine = 0, curLine = 0;
         editorPointToLineCol(app, app.editorBoxAnchorX, app.editorBoxAnchorY,
-                             anchorLine, anchorPos);
-        editorPointToLineCol(app, x, y, curLine, curPos);
+                             anchorLine, app.editorBoxAnchorPos, &anchorPixelX);
+        app.editorBoxAnchorPixelX = anchorPixelX;
+        size_t curPos = 0;
+        editorPointToLineCol(app, x, y, curLine, curPos, &curPixelX);
         if (curLine < anchorLine) std::swap(anchorLine, curLine);
+        const float left = std::min(app.editorBoxAnchorPixelX, curPixelX);
+        const float right = std::max(app.editorBoxAnchorPixelX, curPixelX);
         app.editorExtraCarets.clear();
         for (size_t line = anchorLine; line <= curLine; line++) {
             size_t lineStart = app.editorLineStarts[line];
-            size_t lineLen = getLineLength(app, line);
-            size_t colA = anchorPos - app.editorLineStarts[anchorLine];
-            size_t colB = curPos - app.editorLineStarts[curLine];
-            if (colA > colB) std::swap(colA, colB);
-            size_t col = std::min(colA, lineLen);
-            size_t colEnd = std::min(colB, lineLen);
             App::EditorCaret caret;
-            caret.anchor = lineStart + col;
-            caret.pos = lineStart + colEnd;
+            caret.anchor = editorPosAtPixelX(app, line, left);
+            caret.pos = editorPosAtPixelX(app, line, right);
             caret.hasSelection = caret.anchor != caret.pos;
             app.editorExtraCarets.push_back(caret);
         }
