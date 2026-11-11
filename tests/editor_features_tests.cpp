@@ -466,6 +466,90 @@ void draftRecovery() {
 }
 }  // namespace
 
+// Alt+Shift+drag draws a rectangle and gives every covered row its own
+// caret, exactly like VSCode's column selection. The drag here replays the
+// mouse-down / move / up sequence the window proc would deliver.
+void boxSelection(App& app) {
+    setText(app, L"abcd\nefgh\nijkl\n", 0);
+
+    // Press at column 1 of the first line with Alt+Shift held
+    auto boxDown = [&](int x, int y) {
+        withKeys({false, true, true}, [&] { handleEditorMouseDown(app, app.hwnd, x, y); });
+    };
+    auto boxMove = [&](int x, int y) {
+        withKeys({false, true, true}, [&] { handleEditorMouseMove(app, app.hwnd, x, y); });
+    };
+    auto boxUp = [&]() { handleEditorMouseUp(app, app.hwnd, 0, 0); };
+
+    // Line height is font size * 1.5; land the drag on lines 0 and 2
+    const float lineH = app.editorTextFormat->GetFontSize() * 1.5f;
+    const int yLine0 = (int)(chromeTopHeight(app) + dpi(app, 8.0f) + lineH * 0.5f);
+    const int yLine2 = yLine0 + (int)(lineH * 2.0f);
+    boxDown(95, yLine0);
+    check(app.editorBoxSelecting, "Alt+Shift+press starts a box selection");
+    boxMove(120, yLine2);
+    {
+        std::cerr << "[box] carets=" << app.editorExtraCarets.size() << " spans=";
+        for (const auto& c : app.editorExtraCarets)
+            std::cerr << c.anchor << "-" << c.pos << " ";
+        std::cerr << "\n";
+    }
+    check(app.editorExtraCarets.size() == 3,
+          "three covered rows get three carets");
+    for (const auto& caret : app.editorExtraCarets) {
+        check(caret.hasSelection, "each box row has a real span");
+    }
+    // The spans are the same columns on every line
+    std::vector<std::pair<size_t, size_t>> spans;
+    for (const auto& caret : app.editorExtraCarets)
+        spans.push_back({caret.anchor, caret.pos});
+    check(spans.size() == 3 && spans[0].second - spans[0].first ==
+              spans[1].second - spans[1].first,
+          "the box keeps a uniform column range");
+    boxUp();
+    check(!app.editorBoxSelecting, "release ends the box drag");
+    check(app.editorExtraCarets.size() == 3,
+          "the carets survive the release for immediate typing");
+
+    // Editing all rows at once: type replaces each row's own span (cd, gh, kl)
+    handleCharInput(app, app.hwnd, L'X');
+    check(app.editorText == L"abX\nefX\nijX\n",
+          "typing replaces every row's span simultaneously");
+
+    // One Ctrl+Z restores the pre-edit text
+    key(app, 'Z', {true});
+    check(app.editorText == L"abcd\nefgh\nijkl\n", "the box edit is undoable");
+
+    // Upward drag works too (anchor below the cursor)
+    setText(app, L"abcd\nefgh\nijkl\n", 0);
+    boxDown(120, yLine2);
+    boxMove(95, yLine0);
+    check(app.editorExtraCarets.size() == 3, "dragging upward covers the same rows");
+    boxUp();
+
+    // Zero-width box: dragging straight down inserts a caret per row
+    setText(app, L"abcd\nefgh\nijkl\n", 0);
+    boxDown(95, yLine0);
+    boxMove(95, yLine2);
+    boxUp();
+    bool allZero = true;
+    for (const auto& caret : app.editorExtraCarets)
+        if (caret.hasSelection) allZero = false;
+    check(allZero, "a vertical drag gives zero-width carets");
+
+    // Plain click still collapses the box back to one caret
+    boxDown(95, 100);
+    boxUp();
+    withKeys({false, false, false}, [&] { handleEditorMouseDown(app, app.hwnd, 95, 100); });
+    handleEditorMouseUp(app, app.hwnd, 0, 0);
+    check(app.editorExtraCarets.empty(), "a plain click clears the box carets");
+
+    app.editorReadingPreview = true;
+    boxDown(95, 100);
+    check(!app.editorBoxSelecting, "the reading preview does not start a box");
+    app.editorReadingPreview = false;
+}
+
 int runEditorFeatureTests() {
     auto state = std::make_unique<App>();
     App& app = *state;
@@ -486,6 +570,7 @@ int runEditorFeatureTests() {
         app.editorWordWrap = wrap;
         moveLines(app);
         duplicateLines(app);
+        boxSelection(app);
         wrapSelection(app);
         columnCarets(app);
         caretMotion(app);

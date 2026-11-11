@@ -3646,9 +3646,14 @@ void editorPositionImeWindow(App& app, HWND hwnd) {
 
 // --- Mouse handling ---
 
-static size_t editorPosFromClick(App& app, int x, int y) {
-    app.editorCaretUpstreamPos = std::wstring::npos;
-    if (!app.editorTextFormat || app.editorLineStarts.empty()) return 0;
+// Hit-test without touching caret state: which line and which position a
+// point lands on. The box selection needs both per row, and editorPosFromClick
+// must keep its side effect (clearing the upstream caret memory).
+static void editorPointToLineCol(App& app, int x, int y, size_t& lineOut,
+                                 size_t& posOut) {
+    lineOut = 0;
+    posOut = 0;
+    if (!app.editorTextFormat || app.editorLineStarts.empty()) return;
 
     float lineHeight = app.editorTextFormat->GetFontSize() * 1.5f;
     float padding = dpi(app, 8.0f);
@@ -3668,30 +3673,36 @@ static size_t editorPosFromClick(App& app, int x, int y) {
         line = (size_t)std::max(0, (int)(adjustedY / lineHeight));
     }
     if (line >= app.editorLineStarts.size()) line = app.editorLineStarts.size() - 1;
+    lineOut = line;
 
     size_t lineStart = app.editorLineStarts[line];
     size_t lineLen = getLineLength(app, line);
+    posOut = lineStart;
+    if (lineLen == 0) return;
 
     float adjustedX = (float)x - editorTextX(app);
     if (!editorWrapOn(app)) adjustedX += app.editorScrollX;
-    if (lineLen == 0) return lineStart;
-    if (adjustedX <= 0.0f && !editorWrapOn(app)) return lineStart;
+    if (adjustedX <= 0.0f && !editorWrapOn(app)) return;
     adjustedX = std::max(0.0f, adjustedX);
 
-    size_t col;
     IDWriteTextLayout* layout = createEditorLineLayout(app, lineStart, lineLen);
     if (layout) {
         size_t position = lineStart;
         editorHitCaret(app, layout, adjustedX, localY, lineStart, lineLen, position);
         layout->Release();
-        col = position - lineStart;
+        posOut = position;
     } else {
         float charWidth = app.editorCharWidth > 0 ? app.editorCharWidth : app.editorTextFormat->GetFontSize() * 0.6f;
-        col = (size_t)std::max(0, (int)(adjustedX / charWidth + 0.5f));
+        size_t col = (size_t)std::max(0, (int)(adjustedX / charWidth + 0.5f));
+        posOut = lineStart + std::min(col, lineLen);
     }
-    col = std::min(col, lineLen);
+}
 
-    return lineStart + col;
+static size_t editorPosFromClick(App& app, int x, int y) {
+    app.editorCaretUpstreamPos = std::wstring::npos;
+    size_t line = 0, pos = 0;
+    editorPointToLineCol(app, x, y, line, pos);
+    return pos;
 }
 
 void handleEditorMouseDown(App& app, HWND hwnd, int x, int y) {
@@ -3752,6 +3763,22 @@ void handleEditorMouseDown(App& app, HWND hwnd, int x, int y) {
     // over from a single caret. The Alt release must not then open the
     // window menu.
     if (GetKeyState(VK_MENU) & 0x8000) {
+        if (shift) {
+            // Box (column) selection, VSCode style: the press sets one
+            // corner, the drag extends the rectangle, and every covered row
+            // ends up with its own caret.
+            app.editorBoxSelecting = true;
+            app.editorBoxAnchorX = x;
+            app.editorBoxAnchorY = y;
+            app.editorExtraCarets.clear();
+            app.editorCursorPos = app.editorSelStart = app.editorSelEnd = clickPos;
+            app.editorHasSelection = false;
+            app.editorCaretUpstreamPos = std::wstring::npos;
+            app.lastClickTime = {};
+            resetCursorBlink(app);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return;
+        }
         editorToggleCaretAt(app, clickPos);
         app.altClickGuard = true;
         app.lastClickTime = {};
@@ -3849,6 +3876,10 @@ void handleEditorMouseUp(App& app, HWND, int, int) {
             app.editorHasSelection = false;
         }
     }
+    if (app.editorBoxSelecting) {
+        app.editorBoxSelecting = false;
+        ReleaseCapture();
+    }
 }
 
 void handleEditorMouseMove(App& app, HWND hwnd, int x, int y) {
@@ -3914,6 +3945,40 @@ void handleEditorMouseMove(App& app, HWND hwnd, int x, int y) {
         app.editorSelEnd = pos;
         app.editorCursorPos = pos;
         app.editorHasSelection = (app.editorSelStart != app.editorSelEnd);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return;
+    }
+    if (app.editorBoxSelecting) {
+        // Extend the rectangle from the anchor corner to the cursor: each
+        // row between them gets one caret spanning the two columns.
+        size_t anchorLine = 0, anchorPos = 0, curLine = 0, curPos = 0;
+        editorPointToLineCol(app, app.editorBoxAnchorX, app.editorBoxAnchorY,
+                             anchorLine, anchorPos);
+        editorPointToLineCol(app, x, y, curLine, curPos);
+        if (curLine < anchorLine) std::swap(anchorLine, curLine);
+        app.editorExtraCarets.clear();
+        for (size_t line = anchorLine; line <= curLine; line++) {
+            size_t lineStart = app.editorLineStarts[line];
+            size_t lineLen = getLineLength(app, line);
+            size_t colA = anchorPos - app.editorLineStarts[anchorLine];
+            size_t colB = curPos - app.editorLineStarts[curLine];
+            if (colA > colB) std::swap(colA, colB);
+            size_t col = std::min(colA, lineLen);
+            size_t colEnd = std::min(colB, lineLen);
+            App::EditorCaret caret;
+            caret.anchor = lineStart + col;
+            caret.pos = lineStart + colEnd;
+            caret.hasSelection = caret.anchor != caret.pos;
+            app.editorExtraCarets.push_back(caret);
+        }
+        // The primary caret carries the LAST row's span (not the whole
+        // box): typing then replaces each row's own span, exactly the
+        // multi-cursor path Alt+click carets already use.
+        const App::EditorCaret& last = app.editorExtraCarets.back();
+        app.editorSelStart = last.anchor;
+        app.editorSelEnd = last.pos;
+        app.editorCursorPos = last.pos;
+        app.editorHasSelection = last.anchor != last.pos;
         InvalidateRect(hwnd, nullptr, FALSE);
         return;
     }

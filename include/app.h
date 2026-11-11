@@ -924,6 +924,11 @@ struct App {
         std::wstring stagedName;   // file name while untitled
     };
     std::vector<PendingImage> editorPendingImages;
+    // Alt+Shift+drag box selection (#VSCode column select): the drag anchor
+    // in screen coordinates, remembered for the move that extends the box.
+    bool editorBoxSelecting = false;
+    int editorBoxAnchorX = 0;
+    int editorBoxAnchorY = 0;
     // <a id>/<a name> link targets and their document Y, in document order:
     // the first of a repeated id wins, as in a browser (#255)
     std::vector<std::pair<std::string, float>> htmlAnchors;
