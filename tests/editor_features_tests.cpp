@@ -479,7 +479,11 @@ void boxSelection(App& app) {
     auto boxMove = [&](int x, int y) {
         withKeys({false, true, true}, [&] { handleEditorMouseMove(app, app.hwnd, x, y); });
     };
-    auto boxUp = [&]() { handleEditorMouseUp(app, app.hwnd, 0, 0); };
+    // Release goes through the window-proc entry (input.cpp routes to the
+    // editor only when it sees the drag flags), as a real click would
+    auto boxUp = [&](int x, int y) {
+        handleMouseUp(app, app.hwnd, 0, MAKELPARAM(x, y));
+    };
 
     // Line height is font size * 1.5; land the drag on lines 0 and 2
     const float lineH = app.editorTextFormat->GetFontSize() * 1.5f;
@@ -506,10 +510,14 @@ void boxSelection(App& app) {
     check(spans.size() == 3 && spans[0].second - spans[0].first ==
               spans[1].second - spans[1].first,
           "the box keeps a uniform column range");
-    boxUp();
+    boxUp(120, 160);
     check(!app.editorBoxSelecting, "release ends the box drag");
     check(app.editorExtraCarets.size() == 3,
           "the carets survive the release for immediate typing");
+    // Moving the mouse afterwards must NOT keep reshaping the box
+    withKeys({false, false, false}, [&] { handleEditorMouseMove(app, app.hwnd, 200, 220); });
+    check(app.editorExtraCarets.size() == 3,
+          "mouse movement after the release leaves the box alone");
 
     // Editing all rows at once: type replaces each row's own span (cd, gh, kl)
     handleCharInput(app, app.hwnd, L'X');
@@ -525,22 +533,22 @@ void boxSelection(App& app) {
     boxDown(120, yLine2);
     boxMove(95, yLine0);
     check(app.editorExtraCarets.size() == 3, "dragging upward covers the same rows");
-    boxUp();
+    boxUp(95, yLine0);
 
     // Zero-width box: dragging straight down inserts a caret per row
     setText(app, L"abcd\nefgh\nijkl\n", 0);
     boxDown(95, yLine0);
     boxMove(95, yLine2);
-    boxUp();
+    boxUp(95, yLine2);
     bool allZero = true;
     for (const auto& caret : app.editorExtraCarets)
         if (caret.hasSelection) allZero = false;
     check(allZero, "a vertical drag gives zero-width carets");
 
     // Plain click still collapses the box back to one caret
-    boxDown(95, 100);
-    boxUp();
-    withKeys({false, false, false}, [&] { handleEditorMouseDown(app, app.hwnd, 95, 100); });
+    boxDown(95, yLine0);
+    boxUp(95, yLine0);
+    withKeys({false, false, false}, [&] { handleEditorMouseDown(app, app.hwnd, 95, yLine0); });
     handleEditorMouseUp(app, app.hwnd, 0, 0);
     check(app.editorExtraCarets.empty(), "a plain click clears the box carets");
 

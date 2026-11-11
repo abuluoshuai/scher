@@ -3196,7 +3196,7 @@ void handleMouseUp(App& app, HWND hwnd, WPARAM, LPARAM lParam) {
 
     // Edit mode: route to editor
     if (app.editMode && (app.draggingSeparator || app.editorSelecting ||
-                         app.editorScrollbarDragging)) {
+                         app.editorBoxSelecting || app.editorScrollbarDragging)) {
         int x = GET_X_LPARAM(lParam);
         int y = GET_Y_LPARAM(lParam);
         handleEditorMouseUp(app, hwnd, x, y);
