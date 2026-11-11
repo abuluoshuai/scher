@@ -127,8 +127,11 @@ void settingsDismissal() {
             const D2D1_RECT_F now = settingsPanelRect(app);
             check(std::abs((now.bottom - now.top) -
                            (base.bottom - base.top)) < 0.5f &&
-                  std::abs(now.top - base.top) < 0.5f,
-                  "the settings panel keeps one height across sections");
+                  std::abs((now.right - now.left) -
+                           (base.right - base.left)) < 0.5f &&
+                  std::abs(now.top - base.top) < 0.5f &&
+                  std::abs(now.left - base.left) < 0.5f,
+                  "every section shares the front-matter panel size");
         }
         open(0);
     }

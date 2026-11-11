@@ -2653,12 +2653,9 @@ void settingsChip(App& app, float& x, float y, const wchar_t* label, bool active
 } // namespace
 
 D2D1_RECT_F settingsPanelRect(const App& app) {
-    float w = std::min(dpi(app, app.settingsSection == 3 ? 980.0f : 760.0f), app.width - dpi(app, app.settingsSection == 3 ? 32.0f : 80.0f));
-    // One shared height for every section, sized for the tallest content:
-    // Appearance needs 68 (content top) + 2*84 sliders + 5*58 rows
-    // + 6*10 gaps + 24 (bottom margin) = 610; the front-matter section
-    // keeps its own taller layout at 650. A fixed height keeps the panel
-    // from jumping when the user switches sections in the left rail.
+    // Every section shares the front-matter section's full size, so switching
+    // sections never moves or resizes the panel.
+    float w = std::min(dpi(app, 980.0f), app.width - dpi(app, 32.0f));
     float natural = 650.0f;
     float h = std::min(dpi(app, natural), app.height - dpi(app, 64.0f));
     float x = (app.width - w) / 2;
