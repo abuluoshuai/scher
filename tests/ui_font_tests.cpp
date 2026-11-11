@@ -248,6 +248,17 @@ void surfaces(App& app, FallbackRecorder& recorder) {
     app.showHelp = true;
     paint("help", [&] { renderHelpOverlay(app); });
     expectMapped(recorder, tr(app, "help.title"), "the shortcut list");
+    // Every edit-section row must be listed and the content height must
+    // account for all of them (the panel scrolls, never truncates)
+    expectMapped(recorder, tr(app, "help.edit.duplicate_line"), "the shortcut list");
+    expectMapped(recorder, tr(app, "help.edit.box_select"), "the shortcut list");
+    expectMapped(recorder, tr(app, "help.edit.paste_image"), "the shortcut list");
+    // 41 shortcut rows across the four sections; every row draws at one
+    // line height, so the content height must cover all of them (headers,
+    // gaps and footer only add more). The panel itself scrolls.
+    float lineH = dpi(app, 22.0f);
+    check(app.helpContentHeight >= lineH * 41.0f,
+          "the help content height covers the full entry list");
     app.showHelp = false;
 
     paint("start page", [&] { renderStartPage(app); });

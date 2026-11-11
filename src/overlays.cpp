@@ -2091,9 +2091,12 @@ void renderHelpOverlay(App& app) {
         {L"Ctrl+W",       tr(app, "help.edit.word_wrap")},
         {L"Ctrl+Shift+E", tr(app, "editor.read_help")},
         {L"ESC ESC",      tr(app, "help.edit.exit_edit")},
+        {L"Ctrl+V",       tr(app, "help.edit.paste_image")},
         {L"Alt+\x2191 / Alt+\x2193", tr(app, "help.edit.move_line")},
+        {L"Alt+Shift+\x2191 / \x2193", tr(app, "help.edit.duplicate_line")},
         {L"Ctrl+Alt+\x2191 / \x2193", tr(app, "help.edit.add_caret")},
         {L"Alt+Click",    tr(app, "help.edit.alt_click")},
+        {L"Alt+Shift+Drag", tr(app, "help.edit.box_select")},
         {L"Ctrl+D",       tr(app, "help.edit.next_match")},
     };
 
