@@ -765,7 +765,7 @@ void renderRemoteBrowser(App& app) {
             status = tr(app, "remote.loading");
         } else if (!app.remoteMessage.empty()) {
             status = app.remoteMessage;
-            statusColor = D2D1::ColorF(0.86f, 0.42f, 0.38, 0.95f);
+            statusColor = D2D1::ColorF(0.86f, 0.42f, 0.38f, 0.95f);
         } else if (!app.remotePicked.empty()) {
             status = tr(app, "remote.picked");
         }
