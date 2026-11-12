@@ -44,7 +44,7 @@ HWND makeHiddenWindow() {
 }
 
 // Pumps messages until the worker posts a finished job (or gives up)
-RemoteJob* waitForJob(App& app, int timeoutMs) {
+RemoteJob* waitForJob(int timeoutMs) {
     const DWORD started = GetTickCount();
     for (;;) {
         if (RemoteJob* job = remoteTakeFinished()) return job;
@@ -212,7 +212,7 @@ int runRemoteProcessSuite() {
     check(app.hwnd != nullptr, "the test window is created");
     if (app.hwnd) {
         remoteStartList(app, "box", "/测试目录");
-        RemoteJob* job = waitForJob(app, 20000);
+        RemoteJob* job = waitForJob(20000);
         check(job != nullptr, "the listing worker finishes");
         if (job) {
             check(job->kind == REMOTE_JOB_LIST, "the finished job is a listing");
@@ -224,7 +224,7 @@ int runRemoteProcessSuite() {
         }
 
         remoteStartRead(app, "box", "/note.md");
-        job = waitForJob(app, 20000);
+        job = waitForJob(20000);
         check(job != nullptr, "the read worker finishes");
         if (job) {
             check(job->kind == REMOTE_JOB_READ, "the finished job is a read");
@@ -236,7 +236,7 @@ int runRemoteProcessSuite() {
 
         // A failing job still completes, carrying its error
         remoteStartRead(app, "box", "/nope.md");
-        job = waitForJob(app, 20000);
+        job = waitForJob(20000);
         check(job != nullptr, "a failing read still completes");
         if (job) {
             check(!job->ok, "the failing job reports failure");
