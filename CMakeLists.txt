@@ -223,7 +223,10 @@ if(BUILD_TESTING)
     # The test double is spawned by tinta.exe, whose PATH may not include the
     # MinGW bin directory: a dynamic libstdc++/libgcc makes CreateProcess fail
     # with exit 127 ("ssh failed") on machines without the toolchain on PATH.
-    target_link_options(fake_ssh PRIVATE -static)
+    # MinGW-only: MSVC's linker reads -static as "/static" and warns (LNK4104).
+    if(MINGW)
+        target_link_options(fake_ssh PRIVATE -static)
+    endif()
     add_executable(remote_tests tests/remote_tests.cpp tests/remote_process_tests.cpp ${REMOTE_TEST_SOURCES})
     target_include_directories(remote_tests PRIVATE include ${md4c_SOURCE_DIR}/src)
     target_link_libraries(remote_tests PRIVATE $<TARGET_PROPERTY:tinta,LINK_LIBRARIES>)
