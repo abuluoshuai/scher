@@ -734,6 +734,9 @@ struct App {
     float helpVisibleHeight = 0.0f;   // Visible area height (set during render)
     float helpScrollbarTop = 0.0f;    // Scrollbar track top Y (set during render)
     bool helpScrollbarDragging = false;
+    // General settings: whether "Set as default Markdown viewer" has been
+    // clicked and the association verified during this settings session
+    bool settingsRegisterDefaultChecked = false;
     float helpScrollbarDragStartY = 0;
     float helpScrollbarDragStartScroll = 0;
 

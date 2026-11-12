@@ -745,6 +745,15 @@ static void settingsAction(App& app, HWND hwnd, int action) {
             app.closeKeepsDrafts = !app.closeKeepsDrafts;
             persistCloseKeepsDrafts(app);
             break;
+        case SET_REGISTER_DEFAULT:
+            if (registerFileAssociation()) {
+                app.settingsRegisterDefaultChecked = true;
+                openDefaultAppsSettings();
+            } else {
+                MessageBoxW(hwnd, tr(app, "fileassoc.register_failed_body"),
+                            tr(app, "error.title"), MB_OK | MB_ICONWARNING);
+            }
+            break;
         case SET_TOGGLE_HEADRULES:
             app.headingRules = !app.headingRules;
             // Layout shifts (the rule adds height), so a repaint alone

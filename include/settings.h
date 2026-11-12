@@ -64,6 +64,7 @@ std::wstring configFilePathForShell(const std::wstring& path);
 // Resolve the selected profile and custom [Keys] bindings.
 void applyKeymap(App& app, const Settings& settings);
 bool registerFileAssociation();
+bool isRegisteredAsViewer();
 void openDefaultAppsSettings();
 void askAndRegisterFileAssociation(Settings& settings);
 

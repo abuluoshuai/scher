@@ -135,6 +135,27 @@ void settingsDismissal() {
         }
         open(0);
     }
+    // The "Set as default Markdown viewer" row: a real hit target whose
+    // click registers the association and flips the row into its
+    // registered state; the renderer re-checks the registry on open.
+    {
+        open(0);
+        D2D1_RECT_F registerBtn;
+        bool found = false;
+        for (const auto& [rect, action] : app.settingsHits)
+            if (action == SET_REGISTER_DEFAULT) { registerBtn = rect; found = true; }
+        check(found, "the register-default row exposes a hit target");
+        if (found) {
+            check(isRegisteredAsViewer() == app.settingsRegisterDefaultChecked,
+                  "opening settings syncs the row with the registry");
+            click((registerBtn.left + registerBtn.right) * 0.5f,
+                  (registerBtn.top + registerBtn.bottom) * 0.5f);
+            check(app.settingsRegisterDefaultChecked,
+                  "clicking register-default runs the association write");
+            check(isRegisteredAsViewer(),
+                  "the association really exists in the registry afterwards");
+        }
+    }
     // A dropdown row outside the panel is still part of the dialog.
     app.settingsLangOpen = true;
     app.settingsHits.push_back({D2D1::RectF(panel.left, panel.bottom+4, panel.left+100, panel.bottom+30), SET_LANG_PICK_BASE});

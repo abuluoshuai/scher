@@ -676,6 +676,20 @@ bool registerFileAssociation() {
     return true;
 }
 
+bool isRegisteredAsViewer() {
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+                      L"Software\\Tinta\\Capabilities\\FileAssociations",
+                      0, KEY_READ, &hKey) != ERROR_SUCCESS) return false;
+    wchar_t value[MAX_PATH]{};
+    DWORD size = sizeof(value);
+    const bool ok = RegQueryValueExW(hKey, L".md", nullptr, nullptr,
+                                     (BYTE*)value, &size) == ERROR_SUCCESS &&
+                     wcscmp(value, L"Tinta.MarkdownFile") == 0;
+    RegCloseKey(hKey);
+    return ok;
+}
+
 void openDefaultAppsSettings() {
     ShellExecuteW(nullptr, L"open", L"ms-settings:defaultapps", nullptr, nullptr, SW_SHOWNORMAL);
 }

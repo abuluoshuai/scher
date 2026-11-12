@@ -2679,6 +2679,7 @@ void renderSettingsOverlay(App& app) {
     }
     float anim = app.settingsAnimation;
     app.settingsHits.clear();
+    app.settingsRegisterDefaultChecked = isRegisteredAsViewer();
 
     IDWriteTextFormat* fmt = app.folderBrowserFormat;
     if (!fmt) return;
@@ -2980,6 +2981,43 @@ void renderSettingsOverlay(App& app) {
         settingsToggle(app, cx + cw - cardPad - dpi(app, 40.0f),
                        cy + (rowCardH - dpi(app, 20.0f)) * 0.5f,
                        app.openInTabs, SET_TOGGLE_OPENTABS, anim);
+        cy += rowCardH + cardGap;
+        card(rowCardH);
+        cardLabel(tr(app, "settings.register_default"),
+                  app.settingsRegisterDefaultChecked
+                      ? tr(app, "settings.register_default.registered")
+                      : tr(app, "settings.register_default.hint"),
+                  dpi(app, 60.0f));
+        {
+            // A button (not a toggle): the action registers the association;
+            // the row then shows a "Registered ✓" hint. MSVC store builds
+            // already register via their manifest.
+            const float btnW = dpi(app, 72.0f);
+            const float btnH = dpi(app, 24.0f);
+            D2D1_RECT_F btn = D2D1::RectF(
+                cx + cw - cardPad - btnW,
+                cy + (rowCardH - btnH) * 0.5f,
+                cx + cw - cardPad,
+                cy + (rowCardH - btnH) * 0.5f + btnH);
+            const bool hover =
+                app.mouseX >= btn.left && app.mouseX <= btn.right &&
+                app.mouseY >= btn.top && app.mouseY <= btn.bottom;
+            D2D1_COLOR_F bg = app.theme.accent;
+            bg.a = (hover ? 0.9f : 0.75f) * anim;
+            app.brush->SetColor(bg);
+            app.renderTarget->FillRoundedRectangle(
+                D2D1::RoundedRect(btn, dpi(app, 5.0f), dpi(app, 5.0f)), app.brush);
+            fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            D2D1_COLOR_F ink = app.theme.background;
+            ink.a = anim;
+            app.brush->SetColor(ink);
+            const wchar_t* text = app.settingsRegisterDefaultChecked
+                ? tr(app, "settings.register_default.registered")
+                : tr(app, "settings.register_default");
+            app.renderTarget->DrawText(text, (UINT32)wcslen(text), fmt,
+                btn, app.brush);
+            app.settingsHits.push_back({btn, SET_REGISTER_DEFAULT});
+        }
         cy += rowCardH + cardGap;
         // One card for the three hand-editable ini files (was three rows)
         card(rowCardH);
