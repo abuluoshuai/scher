@@ -135,7 +135,7 @@ int runTabDropTests() {
     updateTextFormats(app);
     check(openDocumentInViewer(app, toWide(paths[1])), "active B document opens");
     const std::wstring dirty = L"# Unsaved B\n\n| Keep | Value |\n| --- | --- |\n| Math | $x^2$ |\n";
-    restoreEditBuffer(app, dirty, true, 17.0f, 12);
+    restoreEditBuffer(app, dirty, true, 17.0f, 12, {}, {}, 0, 0);
     auto sendAt = [&](const std::string& path, POINT client) {
         POINT screen = client;
         ClientToScreen(app.hwnd, &screen);

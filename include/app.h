@@ -495,6 +495,19 @@ struct App {
     // A tab keeps only what the document itself cannot restore: its path
     // and, when the user switches away mid-edit, the parked editor buffer.
     // View-mode scroll positions ride the existing reading-position memory.
+    // Undo/redo
+    struct EditAction {
+        enum Type { Insert, Delete, Replace };
+        Type type;
+        size_t position;
+        std::wstring text;
+        size_t cursorBefore, cursorAfter;
+        std::wstring replacement; // atomic automatic metadata change
+        // Actions sharing a nonzero group undo and redo as one step: an
+        // edit at several carets, a line move (#251)
+        unsigned group = 0;
+    };
+
     struct DocTab {
         int id = 0;                // stable identity across reorders/closes
         std::string path;          // empty = untitled quick note buffer
@@ -507,6 +520,13 @@ struct App {
         float editorScrollY = 0.0f;
         size_t editorCursor = 0;
         bool wordWrap = true;
+        // This document's own undo history for the current app session: the
+        // stacks park with the buffer on a tab switch and restore with it,
+        // so Ctrl+Z keeps walking back to the state the document opened in.
+        std::vector<EditAction> undoStack;
+        std::vector<EditAction> redoStack;
+        unsigned undoGroup = 0;
+        unsigned undoGroupSerial = 0;
         // Reading progress ring (0..1, current position; 1 = finished).
         // Seeded from the settings' position memory, updated while the
         // tab's document is active, merged back on switch/close/exit.
@@ -1448,18 +1468,7 @@ struct App {
     struct PropertyOverflow { D2D1_RECT_F rect; std::wstring text; };
     std::vector<PropertyOverflow> frontmatterOverflow;
 
-    // Undo/redo
-    struct EditAction {
-        enum Type { Insert, Delete, Replace };
-        Type type;
-        size_t position;
-        std::wstring text;
-        size_t cursorBefore, cursorAfter;
-        std::wstring replacement; // atomic automatic metadata change
-        // Actions sharing a nonzero group undo and redo as one step: an
-        // edit at several carets, a line move (#251)
-        unsigned group = 0;
-    };
+
     std::vector<EditAction> undoStack;
     std::vector<EditAction> redoStack;
     unsigned editorUndoGroup = 0;        // group of the edit in progress

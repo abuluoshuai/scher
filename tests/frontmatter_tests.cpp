@@ -105,7 +105,7 @@ void saveTests(App&app,const std::filesystem::path&output){
     app.frontmatter=fm::Settings{};show(app.frontmatter,"created");show(app.frontmatter,"updated");
     auto path=output/"save.md";std::string original="---\ntitle: Save test\nupdated: old # keep\n---\n\n# Body\n";
     write(path,original);app.currentFile=toUtf8(path.wstring());app.tabs.clear();app.editMode=true;app.editorShowPreview=true;
-    restoreEditBuffer(app,toWide(original),true,0,original.size());
+    restoreEditBuffer(app,toWide(original),true,0,original.size(), {}, {}, 0, 0);
     const std::string first="2026-08-01T12:00:00Z";app.frontmatterFirstSeen[frontmatterSeenKey(app)]=first;
     size_t cursor=app.editorCursorPos;saveEditorFile(app,app.hwnd);
     auto saved=read(path);auto metadata=fm::parse(saved);
@@ -119,19 +119,19 @@ void saveTests(App&app,const std::filesystem::path&output){
     SetKeyboardState(control);handleEditorKeyDown(app,app.hwnd,'Y');SetKeyboardState(keyboard);
     check(toUtf8(app.editorText)==saved,"Redo restores the complete stamped buffer");
     // Make the date old again but mark the buffer clean: explicit save still updates it.
-    restoreEditBuffer(app,toWide(original),false,0,0);saveEditorFile(app,app.hwnd);
+    restoreEditBuffer(app,toWide(original),false,0,0, {}, {}, 0, 0);saveEditorFile(app,app.hwnd);
     check(read(path).find("updated: old")==std::string::npos,"explicit save maintains dates even for a clean buffer");
-    auto blocked=output/"blocked.md";write(blocked,original);app.currentFile=toUtf8(blocked.wstring());restoreEditBuffer(app,toWide(original),true,0,3);
+    auto blocked=output/"blocked.md";write(blocked,original);app.currentFile=toUtf8(blocked.wstring());restoreEditBuffer(app,toWide(original),true,0,3, {}, {}, 0, 0);
     auto undoSize=app.undoStack.size();HANDLE lock=CreateFileW(blocked.c_str(),GENERIC_READ,0,nullptr,OPEN_EXISTING,0,nullptr);
     check(lock!=INVALID_HANDLE_VALUE,"failure test locks its isolated file");saveEditorFile(app,app.hwnd);if(lock!=INVALID_HANDLE_VALUE)CloseHandle(lock);
     check(app.editorDirty&&toUtf8(app.editorText)==original&&app.undoStack.size()==undoSize&&read(blocked)==original,"failed write leaves source, editor and undo history unchanged");
-    app.currentFile=toUtf8(path.wstring());app.frontmatter.shown=false;restoreEditBuffer(app,toWide(original),true,0,0);saveEditorFile(app,app.hwnd);
+    app.currentFile=toUtf8(path.wstring());app.frontmatter.shown=false;restoreEditBuffer(app,toWide(original),true,0,0, {}, {}, 0, 0);saveEditorFile(app,app.hwnd);
     check(read(path)==original,"hidden metadata disables automatic date writes");
-    app.frontmatter.shown=true;auto plain=std::string("# No frontmatter\n\nBody\n");write(path,plain);restoreEditBuffer(app,toWide(plain),true,0,0);saveEditorFile(app,app.hwnd);
+    app.frontmatter.shown=true;auto plain=std::string("# No frontmatter\n\nBody\n");write(path,plain);restoreEditBuffer(app,toWide(plain),true,0,0, {}, {}, 0, 0);saveEditorFile(app,app.hwnd);
     check(read(path)==plain,"save never adds a frontmatter block to a document without one");
     auto crlf=std::string("\xEF\xBB\xBF---\r\ntitle: BOM\r\nupdated: old # c\r\n---\r\nBody\r\n");write(path,crlf);
     auto normalized=crlf;normalized.erase(std::remove(normalized.begin(),normalized.end(),'\r'),normalized.end());
-    restoreEditBuffer(app,toWide(normalized),true,0,normalized.size());saveEditorFile(app,app.hwnd);auto bytes=read(path);
+    restoreEditBuffer(app,toWide(normalized),true,0,normalized.size(), {}, {}, 0, 0);saveEditorFile(app,app.hwnd);auto bytes=read(path);
     check(bytes.substr(0,3)==crlf.substr(0,3)&&bytes.find("\r\n")!=std::string::npos&&bytes.find("\r\r\n")==std::string::npos,"native save preserves BOM and original CRLF style");
     for(size_t i=0;i<bytes.size();++i)if(bytes[i]=='\n')check(i>0&&bytes[i-1]=='\r',"all saved line endings remain CRLF");
 }

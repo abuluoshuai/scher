@@ -37,7 +37,7 @@ void paint(App& app) {
 void buffer(App& app,const std::wstring& text) {
     tableEditCancel(app);closeSearchInput(app);app.confirmExitPending=false;app.pendingTabClose=-1;
     app.editorShowPreview=true;app.scrollY=app.targetScrollY=app.scrollX=app.targetScrollX=0;
-    restoreEditBuffer(app,text,false,0,0);app.layoutDirty=true;paint(app);
+    restoreEditBuffer(app,text,false,0,0,{}, {}, 0, 0);app.layoutDirty=true;paint(app);
 }
 App::TableCellRect cell(App& app,int row,int col) {
     ensureLayoutComplete(app);

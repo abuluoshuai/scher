@@ -1485,11 +1485,19 @@ void editorScrollToSourceOffset(App& app, size_t byteOffset) {
 }
 
 void restoreEditBuffer(App& app, const std::wstring& text, bool dirty,
-                       float scrollY, size_t cursor) {
+                       float scrollY, size_t cursor,
+                       std::vector<App::EditAction>&& undoStack,
+                       std::vector<App::EditAction>&& redoStack,
+                       unsigned undoGroup, unsigned undoGroupSerial) {
     enterEditModeWithContent(app, toUtf8(text), false);
     app.editorDirty = dirty;
     app.editorCursorPos = std::min(cursor, app.editorText.size());
     app.editorScrollY = std::max(0.0f, scrollY);
+    // The document's own undo history returns with it (see DocTab members).
+    app.undoStack = std::move(undoStack);
+    app.redoStack = std::move(redoStack);
+    app.editorUndoGroup = undoGroup;
+    app.editorUndoGroupSerial = undoGroupSerial;
     // Opening another file parks the unsaved source; restore its preview
     // from that source too, rather than the last saved file or empty note.
     editorReparse(app);

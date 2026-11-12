@@ -87,7 +87,7 @@ void geometry(App& app, const std::wstring& source) {
             app.width = width;
             app.height = 900;
             updateTextFormats(app);
-            restoreEditBuffer(app, source, false, 0, 0);
+            restoreEditBuffer(app, source, false, 0, 0, {}, {}, 0, 0);
             app.editorShowPreview = true;
             app.layoutDirty = true;
             ensureLayoutComplete(app);
@@ -157,7 +157,7 @@ void sessions(App& app) {
               "the Read button's intro runs in the first sessions only");
         if (session == 1) {
             app.signalChips.clear();
-            restoreEditBuffer(app, L"# Parked\n\nText\n", false, 0, 0);
+            restoreEditBuffer(app, L"# Parked\n\nText\n", false, 0, 0, {}, {}, 0, 0);
             check(app.editHintsShown == 1 && findHint(app, "toast.exit_edit_hint") == nullptr,
                   "returning to a parked edit tab does not replay the hints");
         }
@@ -230,7 +230,7 @@ void hintFade(App& app) {
 // at once: "press Esc again" never outlives the mode
 void hintsLeaveWithTheMode(App& app, const std::wstring& source) {
     for (bool tabSwitch : {false, true}) {
-        restoreEditBuffer(app, source, false, 0, 0);
+        restoreEditBuffer(app, source, false, 0, 0, {}, {}, 0, 0);
         app.signalChips.clear();
         signalPushKey(app, SIG_SUCCESS, SIGI_CHECK, "toast.paste_table");
         key(app, VK_ESCAPE);
@@ -257,7 +257,7 @@ void hintsLeaveWithTheMode(App& app, const std::wstring& source) {
 
 // Esc, Ctrl+E and Ctrl+W answer with hints rather than tray chips
 void editorHints(App& app, const std::wstring& source) {
-    restoreEditBuffer(app, source, false, 0, 0);
+    restoreEditBuffer(app, source, false, 0, 0, {}, {}, 0, 0);
     app.editorShowPreview = true;
     app.signalChips.clear();
     key(app, VK_ESCAPE);

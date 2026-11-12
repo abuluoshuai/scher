@@ -58,6 +58,8 @@ void syncActiveTab(App& app) {
     tab.editorDirty = app.editMode && app.editorDirty;
 }
 
+}  // namespace
+
 // Park the active editor buffer into its tab so the switch away loses
 // nothing: the teardown mirrors exitEditMode minus the dialog and reload
 // (another document loads immediately after).
@@ -73,6 +75,12 @@ void parkActiveEditBuffer(App& app) {
     tab.editorCursor = app.editorCursorPos;
     tab.wordWrap = app.editorWordWrap;
     tab.lastWrite = app.lastFileWriteTime;  // external-change detection
+    // The document's undo history parks with its buffer: switching away and
+    // back must leave Ctrl+Z able to walk to the state this session opened.
+    tab.undoStack = std::move(app.undoStack);
+    tab.redoStack = std::move(app.redoStack);
+    tab.undoGroup = app.editorUndoGroup;
+    tab.undoGroupSerial = app.editorUndoGroupSerial;
 
     app.editMode = false;
     app.editorReadingPreview = false;
@@ -93,8 +101,6 @@ void parkActiveEditBuffer(App& app) {
     updateBlinkTimer(app);
     SetTimer(app.hwnd, TIMER_FILE_WATCH_ID, 500, nullptr);
 }
-
-}  // namespace
 
 void tabsInit(App& app) {
     if (!app.tabs.empty()) return;
@@ -185,8 +191,12 @@ void tabActivate(App& app, HWND hwnd, int index) {
     if (tab.editMode) {
         app.editorWordWrap = tab.wordWrap;
         restoreEditBuffer(app, tab.editorText, tab.editorDirty,
-                          tab.editorScrollY, tab.editorCursor);
+                          tab.editorScrollY, tab.editorCursor,
+                          std::move(tab.undoStack), std::move(tab.redoStack),
+                          tab.undoGroup, tab.undoGroupSerial);
         tab.editorText.clear();  // ownership moved back to the app
+        tab.undoStack.clear();   // stacks moved back to the app as well
+        tab.redoStack.clear();
     }
     app.showTabSwitcher = false;
     // An open search follows to the new document: its highlights, count

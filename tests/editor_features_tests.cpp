@@ -602,6 +602,82 @@ void boxSelectionPixelAlignment(App& app) {
           "the CJK row selects fewer characters at the same pixel width");
 }
 
+// Tab switching preserves each document's own undo history: Ctrl+Z keeps
+// walking back to the state the session opened with, even after visiting
+// other tabs in between. Switching to a viewer tab and back is covered by
+// the park/restore round trip through DocTab.
+void undoSurvivesTabSwitch(App& app) {
+    // Enter edit mode on the fixture, then make two edits
+    // A clean slate: the wrap loop runs this test twice, and the tabs left
+    // by the previous round would otherwise be parked into again
+    app.tabs.clear();
+    app.activeTab = 0;
+    app.tabs.push_back(App::DocTab{});
+    App::DocTab& self = app.tabs.back();
+    self.id = 1;
+    self.path = app.currentFile;
+    self.title = L"fixture.md";
+    enterEditMode(app);
+    setText(app, L"alpha\nbeta\n", 5);
+    handleCharInput(app, app.hwnd, L'1');
+    std::wstring afterFirst = app.editorText;
+    // A deletion never coalesces with the preceding insert, so the two
+    // actions stay distinct on the stack. Backspace arrives as WM_CHAR 8.
+    handleEditorCharInput(app, app.hwnd, 8);
+    std::wstring afterSecond = app.editorText;
+    fprintf(stderr, "[undo-tab] afterFirst_len=%zu afterSecond_len=%zu undo=%zu\n",
+            afterFirst.size(), afterSecond.size(), app.undoStack.size()); fflush(stderr);
+    check(app.editorText != afterFirst, "sanity: both edits landed");
+    const size_t undoDepth = app.undoStack.size();
+    check(undoDepth >= 2, "sanity: the edits pushed undo actions");
+
+    // Park into a second tab and come back
+    fprintf(stderr, "[park] editMode=%d tabs=%zu\n", (int)app.editMode, app.tabs.size()); fflush(stderr);
+    // The real switch flow: activate another tab (which parks this one),
+    // then activate the first tab again. tabActivate to the same index is
+    // a no-op, so a second tab must exist for the round trip.
+    App::DocTab otherTab{};
+    otherTab.id = 99;
+    otherTab.path = "other.md";
+    otherTab.title = L"other.md";
+    app.tabs.push_back(otherTab);
+    tabActivate(app, app.hwnd, 1);
+    check(app.undoStack.empty(), "switching away parks the undo history");
+    check(app.tabs[0].undoStack.size() == undoDepth,
+          "the undo history parks inside the source tab");
+
+    // Switch back: the stacks return with the buffer
+    tabActivate(app, app.hwnd, 0);
+    check(app.editMode, "returning to an edited tab re-enters its editor");
+    check(app.editorText == afterSecond, "the buffer returns unchanged");
+    check(app.undoStack.size() == undoDepth,
+          "the undo history returns with the buffer");
+
+    // Ctrl+Z twice walks back through both edits
+    key(app, 'Z', {true});
+    check(app.editorText == afterFirst, "undo after a tab round trip works");
+    key(app, 'Z', {true});
+    check(app.editorText == L"alpha\nbeta\n",
+          "undo keeps walking to the session's opening state");
+    key(app, 'Y', {true});
+    key(app, 'Y', {true});
+    check(app.editorText == afterSecond, "redo walks it all back");
+
+    // The other tab was never edited: switching to it shows the saved
+    // document with no undo history of its own
+    tabActivate(app, app.hwnd, 1);
+    check(!app.editMode, "an unedited tab opens as the viewer");
+    check(app.undoStack.empty(),
+          "a tab that was never edited has no undo history");
+
+    // Restore the single-fixture state the surrounding tests expect
+    app.tabs.resize(1);
+    app.activeTab = 0;
+    tabActivate(app, app.hwnd, 0);
+    enterEditMode(app);
+    setText(app, L"alpha\nbeta\n", 0);
+}
+
 int runEditorFeatureTests() {
     auto state = std::make_unique<App>();
     App& app = *state;
@@ -624,6 +700,7 @@ int runEditorFeatureTests() {
         duplicateLines(app);
                 boxSelection(app);
                 boxSelectionPixelAlignment(app);
+        undoSurvivesTabSwitch(app);
         wrapSelection(app);
         columnCarets(app);
         caretMotion(app);

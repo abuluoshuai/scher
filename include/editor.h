@@ -48,7 +48,10 @@ bool editorCaretPoint(App& app, D2D1_POINT_2F& point);
 // Re-enter edit mode from a parked tab buffer (tabs.cpp), restoring the
 // dirty flag, scroll, and caret the switch-away captured
 void restoreEditBuffer(App& app, const std::wstring& text, bool dirty,
-                       float scrollY, size_t cursor);
+                       float scrollY, size_t cursor,
+                       std::vector<App::EditAction>&& undoStack,
+                       std::vector<App::EditAction>&& redoStack,
+                       unsigned undoGroup, unsigned undoGroupSerial);
 
 // Quick-note empty state (design 4a): an untitled buffer with no text yet
 // shows a centered "Open a file" button in the preview pane until typing
