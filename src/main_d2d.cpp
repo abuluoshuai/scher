@@ -1062,7 +1062,7 @@ render_document:
             app.metrics.d2dInitUs / 1000.0,
             app.metrics.dwriteInitUs / 1000.0,
             app.metrics.fileLoadUs / 1000.0);
-        swprintf_s(stats, _countof(stats), L"Tinta v%d.%d.%d  |  %ls\n%ls",
+        swprintf_s(stats, _countof(stats), L"Scher v%d.%d.%d  |  %ls\n%ls",
                    TINTA_VERSION_MAJOR, TINTA_VERSION_MINOR,
                    TINTA_VERSION_PATCH, statsLine1, statsLine2);
 
