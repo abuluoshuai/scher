@@ -2749,21 +2749,50 @@ static bool loadSvgBitmap(App& app, const std::wstring& path,
     return !entry.failed;
 }
 
+// Percent-decode a URL path (e.g. "%20" -> space). Markdown image targets
+// are URLs: a space in a file name must be escaped in the link, and the
+// renderer has to decode it back before touching the filesystem.
+static std::string percentDecode(const std::string& in) {
+    auto hex = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '%' && i + 2 < in.size()) {
+            int hi = hex(in[i + 1]), lo = hex(in[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out.push_back((char)((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+        out.push_back(in[i]);
+    }
+    return out;
+}
+
 static App::ImageEntry& getOrLoadImage(App& app, const std::string& src) {
     // The cache key is the reference itself for local/http images, and the
     // resolved remote path for remote ones - so two documents that both say
     // "shot.png" cannot swap pictures. Lookup and store must use the same
     // key, or every layout pass misses and re-downloads.
-    const bool isUrl = (src.rfind("http://", 0) == 0 || src.rfind("https://", 0) == 0);
-    const bool dataUri = src.rfind("data:", 0) == 0;
+    // The parser hands over the URL as written; a "%20" in it stands for a
+    // space in the file name and must be decoded before any file access.
+    const std::string decodedSrc = percentDecode(src);
+    const bool isUrl = (decodedSrc.rfind("http://", 0) == 0 || decodedSrc.rfind("https://", 0) == 0);
+    const bool dataUri = decodedSrc.rfind("data:", 0) == 0;
     const bool remote = !isUrl && !dataUri && remotePathIs(app.currentFile);
     std::string remoteFile;
     std::string remoteHost;
-    std::string key = src;
+    std::string key = decodedSrc;
     if (remote) {
-        remoteFile = remoteImagePathFor(app.currentFile, src);
+        remoteFile = remoteImagePathFor(app.currentFile, decodedSrc);
         remoteHost = remotePathHost(app.currentFile);
-        key = src + "\x1f" + remoteHost + ":" + remoteFile;
+        key = decodedSrc + "\x1f" + remoteHost + ":" + remoteFile;
     }
 
     auto it = app.imageCache.find(key);
@@ -2787,18 +2816,18 @@ static App::ImageEntry& getOrLoadImage(App& app, const std::string& src) {
     if (isUrl) {
         entry.failed = false;
         entry.pending = true;
-        app.storeImageCacheEntry(src, std::move(entry));
+        app.storeImageCacheEntry(decodedSrc, std::move(entry));
         try {
             auto result = std::make_unique<AsyncImageResult>();
-            result->src = src;
+            result->src = decodedSrc;
             std::thread(asyncImageWorker, app.hwnd,
                         app.renderTarget->GetMaximumBitmapSize(), std::move(result)).detach();
         } catch (const std::exception&) {
-            auto& failed = app.imageCache.at(src);
+            auto& failed = app.imageCache.at(decodedSrc);
             failed.pending = false;
             failed.failed = true;
         }
-        return app.imageCache[src];
+        return app.imageCache[decodedSrc];
     } else if (remote) {
         // The document lives on another machine: images come from there too,
         // fetched over the same ssh connection in the background. The cache
@@ -2824,7 +2853,7 @@ static App::ImageEntry& getOrLoadImage(App& app, const std::string& src) {
         // Resolve relative to the current file's directory. Both strings are
         // UTF-8 and must be widened explicitly: a narrow filesystem::path
         // decodes through the ANSI codepage and mangles non-ASCII paths (#87)
-        std::wstring wsrc = toWide(src);
+        std::wstring wsrc = toWide(decodedSrc);
         if (!app.currentFile.empty()) {
             std::filesystem::path basePath(toWide(app.currentFile));
             std::filesystem::path imgPath = basePath.parent_path() / wsrc;
@@ -2853,8 +2882,8 @@ static App::ImageEntry& getOrLoadImage(App& app, const std::string& src) {
         if (lower.size() > 4 &&
             lower.compare(lower.size() - 4, 4, L".svg") == 0) {
             loadSvgBitmap(app, widePath, entry);
-            app.storeImageCacheEntry(src, std::move(entry));
-            return app.imageCache[src];
+            app.storeImageCacheEntry(decodedSrc, std::move(entry));
+            return app.imageCache[decodedSrc];
         }
     }
 

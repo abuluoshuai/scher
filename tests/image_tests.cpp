@@ -202,6 +202,40 @@ void mixedLayout(App& app) {
     drawImages(app);
 }
 
+// A document whose own name contains a space, pasting an image (the link
+// comes out URL-escaped as images/name%20img%2001.png), must still display:
+// the renderer percent-decodes image targets before file access.
+void percentEncodedImage(App& app) {
+    const wchar_t* doc = L"my note 1.md";
+    { std::ofstream f(std::filesystem::path(doc), std::ios::binary); }
+    std::filesystem::create_directories(L"images");
+    const wchar_t* img = L"images/my note 1-img-01.png";
+    check(writeImage(app, img, 40, 20), "the pasted-style PNG writes");
+
+    const std::string source =
+        "# Spaced doc\n\n![image](images/my%20note%201-img-01.png)\n";
+    app.currentFile = std::filesystem::absolute(doc).u8string();
+    app.root = app.parser.parse(source).root;
+    app.readingWidthPct = 100;
+    app.width = 1050; app.height = 900; app.contentScale = 1.0f;
+    updateTextFormats(app);
+    app.clearLayoutCache();
+    app.releaseImageCache();
+    layoutDocument(app);
+    drawImages(app);
+    ensureLayoutComplete(app);
+    bool decoded = false;
+    for (const auto& [key, entry] : app.imageCache)
+        if (key.find("my note 1-img-01.png") != std::string::npos)
+            decoded = entry.bitmap != nullptr && !entry.failed;
+    check(decoded, "a %20-escaped image target decodes to a real file");
+    check(!app.layoutBitmaps.empty(), "the decoded image renders in layout");
+
+    std::filesystem::remove(doc);
+    std::filesystem::remove(img);
+    std::filesystem::remove("images");
+}
+
 // Hover, press and release through the real handlers, as a separate click
 // rather than the second half of a double-click
 void click(App& app, float x, float y) {
@@ -296,6 +330,7 @@ int runImageTests(const char* remoteBase) {
     decoding(app);
     ownership(app);
     mixedLayout(app);
+    percentEncodedImage(app);
     lightboxDismissal(app);
     if (remoteBase) remoteImages(app, remoteBase);
     DestroyWindow(app.hwnd);
