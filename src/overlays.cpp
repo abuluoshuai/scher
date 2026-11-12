@@ -3007,15 +3007,25 @@ void renderSettingsOverlay(App& app) {
             app.brush->SetColor(bg);
             app.renderTarget->FillRoundedRectangle(
                 D2D1::RoundedRect(btn, dpi(app, 5.0f), dpi(app, 5.0f)), app.brush);
-            fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             D2D1_COLOR_F ink = app.theme.background;
             ink.a = anim;
             app.brush->SetColor(ink);
             const wchar_t* text = app.settingsRegisterDefaultChecked
                 ? tr(app, "settings.register_default.registered")
                 : tr(app, "settings.register_default");
-            app.renderTarget->DrawText(text, (UINT32)wcslen(text), fmt,
-                btn, app.brush);
+            // Center via a throwaway layout: setting CENTER on the shared
+            // fmt would leak into every later card label and chip (the
+            // Pandoc row draws its chip with this same format).
+            IDWriteTextLayout* center = nullptr;
+            app.dwriteFactory->CreateTextLayout(text, (UINT32)wcslen(text),
+                fmt, btn.right - btn.left, btn.bottom - btn.top, &center);
+            if (center) {
+                center->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                center->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                app.renderTarget->DrawTextLayout(
+                    D2D1::Point2F(btn.left, btn.top), center, app.brush);
+                center->Release();
+            }
             app.settingsHits.push_back({btn, SET_REGISTER_DEFAULT});
         }
         cy += rowCardH + cardGap;

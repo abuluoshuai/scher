@@ -155,6 +155,13 @@ void settingsDismissal() {
             check(isRegisteredAsViewer(),
                   "the association really exists in the registry afterwards");
         }
+        // The button centers its label via a throwaway text layout; the
+        // shared format must stay left-aligned or every later card label
+        // and chip inherits centering (this broke the Pandoc row once).
+        open(2);
+        check(app.folderBrowserFormat->GetTextAlignment() ==
+                  DWRITE_TEXT_ALIGNMENT_LEADING,
+              "the shared settings format keeps left alignment");
     }
     // A dropdown row outside the panel is still part of the dialog.
     app.settingsLangOpen = true;
