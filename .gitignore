@@ -1,6 +1,7 @@
 # Build
 build/
 build-test/
+build-msvc/
 out/
 cmake-build-*/
 

@@ -160,7 +160,7 @@ static void logScript(const std::wstring& script) {
     fclose(f);
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char**) {
     // Byte-exact like a real ssh: text-mode stdout would turn every LF into
     // CRLF and the file content would no longer match what is on "disk".
     _setmode(_fileno(stdin), _O_BINARY);

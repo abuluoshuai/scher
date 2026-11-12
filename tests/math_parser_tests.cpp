@@ -137,7 +137,7 @@ int main() {
                          : command[1] == L's' ? "smash"
                          : command[1] == L'b' ? "boxed"
                          : command[1] == L'o' ? "overline" : "underline";
-        check(parsed != nullptr, "a decorated group parses");
+        check(parsed != nullptr, (std::string(name) + " group parses").c_str());
         check(textOf(parsed) == L"x+1",
               "the decorated group keeps its content");
     }
