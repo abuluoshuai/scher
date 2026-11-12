@@ -16,6 +16,11 @@ endif()
 if(MSVC)
     add_compile_options(/W4)
     add_compile_options($<$<CONFIG:Release>:/O2>)
+    # Source and execution charset are UTF-8: the i18n tables and the wide
+    # string literals carry CJK/emoji escapes, and without /utf-8 MSVC would
+    # decode the sources in the system codepage (GBK on zh-CN installs),
+    # mangling every non-ASCII literal.
+    add_compile_options(/utf-8)
     add_compile_definitions(NOMINMAX _CRT_SECURE_NO_WARNINGS)
     # Static CRT: the exe must run on clean Windows installs without the
     # VC++ redistributable (costs ~250 KB, keeps the single-file promise)
