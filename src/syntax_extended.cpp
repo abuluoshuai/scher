@@ -59,6 +59,8 @@ const Rules& rules(int language) {
 // Every token is a slice of the caller's line. A single advancing cursor makes
 // source preservation independent of which language rule matched.
 struct Lexer {
+    Lexer(View lineView, SyntaxState& syntaxState, int lang)
+        : line(lineView), state(syntaxState), language(lang) {}
     View line;
     SyntaxState& state;
     int language;

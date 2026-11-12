@@ -588,6 +588,7 @@ struct RunProps {
 };
 
 struct DocxCtx {
+    explicit DocxCtx(App& context) : app(context) {}
     App& app;
     std::string body;
     std::vector<ElementPtr> footnotes;

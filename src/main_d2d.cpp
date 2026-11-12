@@ -46,7 +46,9 @@
 #include "tabs.h"
 #include "search_panel.h"
 #include <dbghelp.h>
+#if defined(_MSC_VER)
 #pragma comment(lib, "dbghelp.lib")
+#endif
 
 static App* g_app = nullptr;
 
@@ -2064,7 +2066,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         if (!monitor) {
             // Fully off every live monitor: clamp into the nearest one
             monitor = MonitorFromRect(&saved, MONITOR_DEFAULTTONEAREST);
-            MONITORINFO mi = { sizeof(mi) };
+            MONITORINFO mi{};
+            mi.cbSize = sizeof(mi);
             if (monitor && GetMonitorInfoW(monitor, &mi)) {
                 const RECT& wa = mi.rcWork;
                 int width = std::min<int>(savedSettings.windowWidth, wa.right - wa.left);

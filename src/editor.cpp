@@ -464,7 +464,12 @@ static void pushUndo(App& app, App::EditAction::Type type, size_t pos,
             return;
         }
     }
-    App::EditAction action{type, pos, text, curBefore, curAfter};
+    App::EditAction action{};
+    action.type = type;
+    action.position = pos;
+    action.text = text;
+    action.cursorBefore = curBefore;
+    action.cursorAfter = curAfter;
     action.group = app.editorUndoGroup;
     app.undoStack.push_back(std::move(action));
     app.redoStack.clear();
@@ -474,8 +479,13 @@ static void pushUndo(App& app, App::EditAction::Type type, size_t pos,
 static void pushReplaceUndo(App& app, size_t pos, const std::wstring& removed,
                             const std::wstring& inserted, size_t curBefore,
                             size_t curAfter) {
-    App::EditAction action{App::EditAction::Replace, pos, removed, curBefore,
-                           curAfter, inserted};
+    App::EditAction action{};
+    action.type = App::EditAction::Replace;
+    action.position = pos;
+    action.text = removed;
+    action.cursorBefore = curBefore;
+    action.cursorAfter = curAfter;
+    action.replacement = inserted;
     action.group = app.editorUndoGroup;
     app.undoStack.push_back(std::move(action));
     app.redoStack.clear();
@@ -2094,7 +2104,12 @@ void saveEditorFile(App& app, HWND hwnd) {
                 return position - oldEnd + newEnd;
             };
             size_t cursor = shifted(app.editorCursorPos);
-            App::EditAction action{App::EditAction::Replace, begin, app.editorText.substr(begin, oldEnd-begin), app.editorCursorPos, cursor};
+            App::EditAction action{};
+            action.type = App::EditAction::Replace;
+            action.position = begin;
+            action.text = app.editorText.substr(begin, oldEnd-begin);
+            action.cursorBefore = app.editorCursorPos;
+            action.cursorAfter = cursor;
             action.replacement = savedText.substr(begin, newEnd-begin);
             app.undoStack.push_back(std::move(action));app.redoStack.clear();
             app.editorSelStart = shifted(app.editorSelStart);app.editorSelEnd = shifted(app.editorSelEnd);
@@ -3995,7 +4010,6 @@ void handleEditorMouseMove(App& app, HWND hwnd, int x, int y) {
         const float right = std::max(app.editorBoxAnchorPixelX, curPixelX);
         app.editorExtraCarets.clear();
         for (size_t line = anchorLine; line <= curLine; line++) {
-            size_t lineStart = app.editorLineStarts[line];
             App::EditorCaret caret;
             caret.anchor = editorPosAtPixelX(app, line, left);
             caret.pos = editorPosAtPixelX(app, line, right);
@@ -4017,7 +4031,6 @@ void handleEditorMouseMove(App& app, HWND hwnd, int x, int y) {
     // Cursor shape: the seam column is the split handle
     static HCURSOR cursorSizeWE = LoadCursor(nullptr, IDC_SIZEWE);
     static HCURSOR cursorIBeam = LoadCursor(nullptr, IDC_IBEAM);
-    static HCURSOR cursorArrow = LoadCursor(nullptr, IDC_ARROW);
 
     if (app.readButtonHover) {
         SetCursor(LoadCursor(nullptr, IDC_HAND));

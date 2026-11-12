@@ -3594,7 +3594,8 @@ static void toggleZenMode(App& app, HWND hwnd) {
     if (app.zenMode) {
         app.zenRestorePlacement.length = sizeof(WINDOWPLACEMENT);
         GetWindowPlacement(hwnd, &app.zenRestorePlacement);
-        MONITORINFO mi = { sizeof(mi) };
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
         GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi);
         SetWindowLongW(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
         SetWindowPos(hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top,

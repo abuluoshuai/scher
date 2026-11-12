@@ -27,8 +27,10 @@
 #include <thread>
 #include <d2d1_3.h>
 #include <shlwapi.h>
+#if defined(_MSC_VER)
 #pragma comment(lib, "urlmon.lib")
 #pragma comment(lib, "shlwapi.lib")
+#endif
 
 // Fit-to-width override lookup for a table/diagram ordinal key
 static bool fitBlockEnabled(const App& app, unsigned key) {
@@ -350,8 +352,6 @@ public:
     LineBreakAnalysis(const wchar_t* text, UINT32 length)
         : text_(text), length_(length), breakpoints_(length) {}
 
-    std::vector<DWRITE_LINE_BREAKPOINT> breakpoints_;
-
     // Stack-allocated and used synchronously: refcounting is inert
     ULONG STDMETHODCALLTYPE AddRef() override { return 2; }
     ULONG STDMETHODCALLTYPE Release() override { return 1; }
@@ -415,9 +415,14 @@ public:
     HRESULT STDMETHODCALLTYPE SetBidiLevel(UINT32, UINT32, UINT8, UINT8) override { return S_OK; }
     HRESULT STDMETHODCALLTYPE SetNumberSubstitution(UINT32, UINT32, IDWriteNumberSubstitution*) override { return S_OK; }
 
+    const std::vector<DWRITE_LINE_BREAKPOINT>& breakpoints() const {
+        return breakpoints_;
+    }
+
 private:
     const wchar_t* text_;
     UINT32 length_;
+    std::vector<DWRITE_LINE_BREAKPOINT> breakpoints_;
 };
 
 // canBreak[i] == true when a line may break before text[i]; canBreak[len]
@@ -449,7 +454,7 @@ void analyzeBreakOpportunities(App& app, const std::wstring& text, std::vector<b
         if (SUCCEEDED(app.textAnalyzer->AnalyzeLineBreakpoints(
                 &analysis, 0, (UINT32)text.size(), &analysis))) {
             for (size_t i = 1; i < text.size(); i++) {
-                UINT8 after = analysis.breakpoints_[i - 1].breakConditionAfter;
+                UINT8 after = analysis.breakpoints()[i - 1].breakConditionAfter;
                 canBreak[i] = (after == DWRITE_BREAK_CONDITION_CAN_BREAK ||
                                after == DWRITE_BREAK_CONDITION_MUST_BREAK);
             }

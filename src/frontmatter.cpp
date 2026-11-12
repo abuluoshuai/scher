@@ -112,7 +112,8 @@ Document parse(const std::string& source) {
         auto text=source.substr(at,end-at);
         if(text=="---"||text=="...") {doc.present=true;doc.closing=at;doc.end=next==std::string::npos?source.size():next+1;break;}
         lines.push_back({at,end,next==std::string::npos?source.size():next+1});
-        if(next==std::string::npos)break;at=next+1;
+        if(next==std::string::npos)break;
+        at=next+1;
     }
     if(!doc.present)return doc;
     std::set<std::string> seen;
@@ -165,10 +166,16 @@ Document parse(const std::string& source) {
     return doc;
 }
 const Property* find(const Document& doc,const std::string& key) {
-    for(const auto& p:doc.properties)if(p.key==key)return &p;return nullptr;
+    for(const auto& p:doc.properties) {
+        if(p.key==key)return &p;
+    }
+    return nullptr;
 }
 const Rule* find(const Settings& settings,const std::string& key) {
-    for(const auto& r:settings.rules)if(r.key==key)return &r;return nullptr;
+    for(const auto& r:settings.rules) {
+        if(r.key==key)return &r;
+    }
+    return nullptr;
 }
 bool discover(Settings& settings,const std::vector<Property>& properties) {
     bool changed=false;
@@ -259,7 +266,8 @@ bool decodeRule(const std::string& value,Rule& r) {
     Rule out;try {
         for(size_t i=0;i<parts[0].size();i+=2) {
             auto pair=parts[0].substr(i,2);size_t n=0;int c=std::stoi(pair,&n,16);
-            if(n!=2||c==0)return false;out.key+=(char)c;
+            if(n!=2||c==0)return false;
+            out.key+=(char)c;
         }
         int values[6];for(int i=0;i<6;++i){size_t n;values[i]=std::stoi(parts[i+1],&n);if(n!=parts[i+1].size())return false;}
         if(values[0]<0||values[0]>1||values[1]<0||values[1]>1||values[2]<0||values[2]>1||values[3]<0||values[3]>7||values[4]<0||values[4]>100||values[5]<0||values[5]>4)return false;

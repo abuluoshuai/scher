@@ -135,7 +135,8 @@ float layoutFrontmatterStrip(App& app,const std::vector<fm::Property>& propertie
                 add(value,false,large,color(large?app.theme.heading:app.theme.text,large?1.f:.75f));
             }
         }
-        if(lineH>0)finish();heights[side]=gy-top;
+        if(lineH>0)finish();
+        heights[side]=gy-top;
     }
     float bottom=std::max(heights[0],heights[1])+top;
     if(parts.empty())return top;
