@@ -135,9 +135,10 @@ void settingsDismissal() {
         }
         open(0);
     }
-    // The "Set as default Markdown viewer" row: a real hit target whose
-    // click registers the association and flips the row into its
-    // registered state; the renderer re-checks the registry on open.
+    // The "Set as default Markdown viewer" row: its hit target exists and
+    // the row state syncs with the registry when the panel opens. The test
+    // must NOT click it — writing HKCU file associations from a test run
+    // changes the real machine state, which is not a test's business.
     {
         open(0);
         D2D1_RECT_F registerBtn;
@@ -148,12 +149,6 @@ void settingsDismissal() {
         if (found) {
             check(isRegisteredAsViewer() == app.settingsRegisterDefaultChecked,
                   "opening settings syncs the row with the registry");
-            click((registerBtn.left + registerBtn.right) * 0.5f,
-                  (registerBtn.top + registerBtn.bottom) * 0.5f);
-            check(app.settingsRegisterDefaultChecked,
-                  "clicking register-default runs the association write");
-            check(isRegisteredAsViewer(),
-                  "the association really exists in the registry afterwards");
         }
         // The button centers its label via a throwaway text layout; the
         // shared format must stay left-aligned or every later card label
