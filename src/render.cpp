@@ -2950,12 +2950,24 @@ static void layoutImage(App& app, const ElementPtr& elem, float& y, float indent
         displayW = displayH * (imgW / imgH);
     }
 
-    // HTML alignment (from <img align> or a wrapping <div align>): the
-    // image is a block here, so center/right shifts x by the leftover
+    // HTML alignment: the <img> itself may carry align, or the wrapping
+    // <div align> does (the inline breakout hands us the image element,
+    // so the parent chain is checked too).
+    int align = elem->htmlAlign;
+    for (const Element* p = elem->parent; p && align == 0;
+         p = p->parent) {
+        if (p->htmlAlign != 0) {
+            align = p->htmlAlign;
+        } else if (p->type != ElementType::HtmlDiv &&
+                   p->type != ElementType::Paragraph &&
+                   p->type != ElementType::Document) {
+            break;  // a non-aligning block boundary stops the search
+        }
+    }
     float drawX = indent;
-    if (elem->htmlAlign == 2) {
+    if (align == 2) {
         drawX = indent + std::max(0.0f, (maxWidth - indent - displayW) * 0.5f);
-    } else if (elem->htmlAlign == 3) {
+    } else if (align == 3) {
         drawX = indent + std::max(0.0f, maxWidth - indent - displayW);
     }
 
