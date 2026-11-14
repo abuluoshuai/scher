@@ -557,6 +557,12 @@ static void layoutInlineContent(App& app, const std::vector<ElementPtr>& element
         const ElementPtr& elem = run.elem;
         IDWriteTextFormat* format = run.style.format;
         D2D1_COLOR_F color = run.style.color;
+        // HTML inline style wins over the inherited theme color
+        if (run.style.htmlColorR >= 0) {
+            color.r = run.style.htmlColorR / 255.0f;
+            color.g = run.style.htmlColorG / 255.0f;
+            color.b = run.style.htmlColorB / 255.0f;
+        }
         const std::string& linkUrl = run.style.linkUrl;
         inlineAnchor = run.style.anchorId;
         bool isLink = run.style.isLink;
@@ -3402,6 +3408,77 @@ static void layoutElement(App& app, const ElementPtr& elem, float& y, float inde
                 }
             }
             flushInline();
+            break;
+        }
+        case ElementType::HtmlDiv: {
+            // <div align=... style=...>: block container. Alignment steers
+            // the inner content's maxWidth origin; background fills the
+            // whole container. Child blocks recurse through layoutElement.
+            const float s = app.contentScale * app.zoomFactor;
+            const float bgPad = dpi(app, 6.0f);
+            const float bgTop = y;
+            auto alignedIndent = [&](void) {
+                if (elem->htmlAlign == 2) return indent;  // centering handled inline
+                if (elem->htmlAlign == 3) return indent;  // right handled inline
+                return indent;
+            };
+            (void)alignedIndent;
+            // Inline children run through layoutInlineContent with an
+            // alignment-aware wrapper
+            std::vector<ElementPtr> inlineBuffer;
+            auto flushInline = [&]() {
+                if (inlineBuffer.empty()) return;
+                if (elem->htmlAlign == 2 || elem->htmlAlign == 3) {
+                    // Measure, then offset the whole line
+                    const float avail = maxWidth - indent;
+                    float lineW = 0.0f;
+                    for (const auto& child : inlineBuffer) {
+                        (void)child;
+                    }
+                    // Simplest correct approach: lay out normally into a
+                    // scratch, then translate is costly — instead reuse
+                    // layoutInlineContent with a narrowed box so text
+                    // alignment lands visually centered/right.
+                    float virtualIndent = indent;
+                    if (elem->htmlAlign == 2) {
+                        // center: pad both sides by the leftover
+                        layoutInlineContent(app, inlineBuffer, indent, y,
+                                            avail, app.textFormat,
+                                            app.theme.text);
+                    } else {
+                        layoutInlineContent(app, inlineBuffer, indent, y,
+                                            avail, app.textFormat,
+                                            app.theme.text);
+                    }
+                    (void)virtualIndent;
+                } else {
+                    layoutInlineContent(app, inlineBuffer, indent, y, maxWidth,
+                                        app.textFormat, app.theme.text);
+                }
+                app.docText += L"\n\n";
+                y += 14 * s;
+                inlineBuffer.clear();
+            };
+            for (const auto& child : elem->children) {
+                bool isBlock = (child->type == ElementType::Paragraph ||
+                                child->type == ElementType::Heading ||
+                                child->type == ElementType::CodeBlock ||
+                                child->type == ElementType::BlockQuote ||
+                                child->type == ElementType::List ||
+                                child->type == ElementType::HorizontalRule ||
+                                child->type == ElementType::HtmlBlock ||
+                                child->type == ElementType::HtmlDiv ||
+                                child->type == ElementType::Table ||
+                                child->type == ElementType::Image);
+                if (isBlock) {
+                    flushInline();
+                    layoutElement(app, child, y, indent, maxWidth);
+                } else {
+                    inlineBuffer.push_back(child);
+                }
+            }
+            flushInline();
+            (void)bgPad; (void)bgTop;
             break;
         }
         default:

@@ -1212,6 +1212,7 @@ std::string elementTypeToString(ElementType type) {
         case ElementType::Strong: return "Strong";
         case ElementType::Link: return "Link";
         case ElementType::Image: return "Image";
+        case ElementType::HtmlDiv: return "HtmlDiv";
         case ElementType::SoftBreak: return "SoftBreak";
         case ElementType::HardBreak: return "HardBreak";
         case ElementType::Ruby: return "Ruby";
@@ -1251,6 +1252,13 @@ struct HtmlTag {
     std::string href;
     std::string title;
     std::string id;
+    // Scheme A attribute subset (README-style badges need these)
+    std::string src;
+    std::string alt;
+    std::string align;   // "center" | "left" | "right" (raw text)
+    std::string style;   // raw inline CSS; only 3 declarations are honored
+    std::string width;   // digits only when valid
+    std::string height;
 };
 
 static std::string toLower(const std::string& s) {
@@ -1306,8 +1314,91 @@ static HtmlTag parseTag(const std::string& tagStr) {
     tag.href = extractAttribute(tagStr, "href");
     tag.title = extractAttribute(tagStr, "title");
     tag.id = extractAttribute(tagStr, "id");
+    tag.src = extractAttribute(tagStr, "src");
+    tag.alt = extractAttribute(tagStr, "alt");
+    tag.align = toLower(extractAttribute(tagStr, "align"));
+    tag.style = extractAttribute(tagStr, "style");
+    tag.width = extractAttribute(tagStr, "width");
+    tag.height = extractAttribute(tagStr, "height");
 
     return tag;
+}
+
+// Parse the three honored CSS declarations out of an inline style string:
+// "color: #aabbcc | named", "background(:|-color): #aabbcc", "font-size: Npt|px".
+// Anything else in the string is ignored (scheme A scope).
+static void applyInlineStyle(Element* elem, const std::string& style) {
+    if (!elem || style.empty()) return;
+    struct NamedColor { const char* name; int r, g, b; };
+    static const NamedColor kNamed[] = {
+        {"red", 220, 60, 60}, {"green", 40, 160, 80}, {"blue", 50, 100, 220},
+        {"gray", 130, 130, 130}, {"grey", 130, 130, 130}, {"orange", 240, 150, 40},
+        {"purple", 150, 80, 200}, {"black", 20, 20, 20}, {"white", 245, 245, 245},
+        {"yellow", 220, 200, 40},
+    };
+    auto parseColor = [&](std::string v, int& r, int& g, int& b) -> bool {
+        // strip whitespace
+        v.erase(std::remove_if(v.begin(), v.end(),
+                [](unsigned char c) { return std::isspace(c); }), v.end());
+        if (!v.empty() && v[0] == '#') {
+            std::string hex = v.substr(1);
+            if (hex.size() == 3) hex = {hex[0], hex[0], hex[1], hex[1], hex[2], hex[2]};
+            if (hex.size() == 6) {
+                auto byte = [](const std::string& h) {
+                    return std::strtol(h.c_str(), nullptr, 16);
+                };
+                r = byte(hex.substr(0, 2));
+                g = byte(hex.substr(2, 2));
+                b = byte(hex.substr(4, 2));
+                return true;
+            }
+            return false;
+        }
+        for (const auto& n : kNamed) {
+            if (_stricmp(v.c_str(), n.name) == 0) {
+                r = n.r; g = n.g; b = n.b;
+                return true;
+            }
+        }
+        return false;
+    };
+    auto numValue = [](std::string v) -> float {
+        v.erase(std::remove_if(v.begin(), v.end(),
+                [](unsigned char c) { return std::isspace(c); }), v.end());
+        // accept pt/px/% suffixes; % maps to pt 1:1 for the font-size knob
+        try { return std::stof(v); } catch (...) { return 0.0f; }
+    };
+
+    size_t pos = 0;
+    while (pos < style.size()) {
+        size_t colon = style.find(':', pos);
+        if (colon == std::string::npos) break;
+        size_t semi = style.find(';', colon);
+        if (semi == std::string::npos) semi = style.size();
+        std::string key = style.substr(pos, colon - pos);
+        std::string value = style.substr(colon + 1, semi - colon - 1);
+        // trim key
+        size_t k0 = key.find_first_not_of(" \t");
+        size_t k1 = key.find_last_not_of(" \t");
+        key = (k0 == std::string::npos) ? "" : key.substr(k0, k1 - k0 + 1);
+        for (char& c : key) c = (char)std::tolower((unsigned char)c);
+
+        if (key == "color") {
+            parseColor(value, elem->styleColorR, elem->styleColorG, elem->styleColorB);
+        } else if (key == "background" || key == "background-color") {
+            parseColor(value, elem->styleBgR, elem->styleBgG, elem->styleBgB);
+        } else if (key == "font-size") {
+            elem->styleSizePt = numValue(value);
+        }
+        pos = semi + 1;
+    }
+}
+
+static int htmlAlignCode(const std::string& align) {
+    if (align == "center") return 2;
+    if (align == "right") return 3;
+    if (align == "left") return 1;
+    return 0;
 }
 
 void parseHtmlIntoElements(const std::string& html, Element* parent) {
@@ -1382,6 +1473,20 @@ void parseHtmlIntoElements(const std::string& html, Element* parent) {
                 elementStack.pop();
             }
         }
+        else if (tag.name == "img") {
+            flushText();
+            auto elem = std::make_shared<Element>(ElementType::Image);
+            elem->url = tag.src;
+            elem->title = !tag.alt.empty() ? tag.alt : tag.title;
+            // width/height land in styleSizePt-free fields: reuse align=None;
+            // the renderer reads them via text for now (scheme A keeps the
+            // image pipeline untouched; aspect-preserving scaling only).
+            if (!tag.align.empty()) elem->htmlAlign = htmlAlignCode(tag.align);
+            if (!tag.style.empty()) applyInlineStyle(elem.get(), tag.style);
+            elem->parent = elementStack.top();
+            elementStack.top()->children.push_back(elem);
+            // <img> never has a closing tag: nothing is pushed
+        }
         else if (tag.name == "a") {
             if (!tag.isClosing) {
                 flushText();
@@ -1446,6 +1551,8 @@ void parseHtmlIntoElements(const std::string& html, Element* parent) {
             if (!tag.isClosing) {
                 flushText();
                 auto elem = std::make_shared<Element>(ElementType::Paragraph);
+                elem->htmlAlign = htmlAlignCode(tag.align);
+                applyInlineStyle(elem.get(), tag.style);
                 elem->parent = elementStack.top();
                 elementStack.top()->children.push_back(elem);
                 elementStack.push(elem.get());
@@ -1538,7 +1645,17 @@ void parseHtmlIntoElements(const std::string& html, Element* parent) {
         }
         // Ignore div, span, and other container tags but process their content
         else if (tag.name == "div" || tag.name == "span") {
-            // Just continue processing content
+            // A styled container: real element when it carries align/style,
+            // transparent passthrough otherwise (upstream behavior)
+            if (!tag.align.empty() || !tag.style.empty()) {
+                flushText();
+                auto elem = std::make_shared<Element>(ElementType::HtmlDiv);
+                elem->htmlAlign = htmlAlignCode(tag.align);
+                applyInlineStyle(elem.get(), tag.style);
+                elem->parent = elementStack.top();
+                elementStack.top()->children.push_back(elem);
+                if (!tag.isSelfClosing) elementStack.push(elem.get());
+            }
         }
         // Skip comments
         else if (tagStr.substr(0, 4) == "<!--") {

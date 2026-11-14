@@ -341,6 +341,44 @@ void tildeRetries() {
           "the unpaired double tilde stays literal");
 }
 
+// HTML attribute subset (scheme A): img/div/p accept align/src/alt/style,
+// three CSS declarations are honored, everything else in style is ignored.
+void htmlAttributes() {
+    qmd::MarkdownParser parser;
+    auto result = parseText(
+        "<div align=\"center\" style=\"color: #cc3333\">centered red</div>\n");
+    const Element* div = findFirst(result.root.get(), ElementType::HtmlDiv);
+    check(div != nullptr, "a styled div becomes an HtmlDiv element");
+    if (div) {
+        check(div->htmlAlign == 2, "div align=center maps to align code 2");
+        check(div->styleColorR == 0xcc && div->styleColorG == 0x33 &&
+              div->styleColorB == 0x33,
+              "style color:#cc3333 parses into the RGB fields");
+        check(visibleText(result.root.get()).find("centered red") !=
+                  std::string::npos,
+              "the div's text survives");
+    }
+
+    auto img = parseText(
+        "<img src=\"images/badge.png\" alt=\"badge\" />\n");
+    const Element* image = findFirst(img.root.get(), ElementType::Image);
+    check(image != nullptr, "an HTML <img> becomes an Image element");
+    if (image) {
+        check(image->url == "images/badge.png", "img src lands in url");
+        check(image->title == "badge", "img alt lands in title");
+    }
+
+    auto styled = parseText(
+        "<p style=\"font-size: 20pt; text-align: bogus; margin: 0\">big</p>\n");
+    const Element* para = findFirst(styled.root.get(), ElementType::Paragraph);
+    check(para != nullptr && para->styleSizePt == 20.0f,
+          "font-size parses and unknown declarations are ignored");
+
+    auto plain = parseText("<div>just content</div>\n");
+    check(findFirst(plain.root.get(), ElementType::HtmlDiv) == nullptr,
+          "a div without align/style stays transparent");
+}
+
 }  // namespace
 
 int runMarkdownParseSuite() {
@@ -356,6 +394,7 @@ int runMarkdownParseSuite() {
     typeNames();
     alertMarkers();
     htmlBlocks();
+    htmlAttributes();
     debugPrinter();
     tildeRetries();
     plainAndMermaidDocuments();

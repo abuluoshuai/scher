@@ -26,6 +26,7 @@ enum class ElementType {
     TableRow,
     TableCell,
     HtmlBlock,      // Raw HTML block
+    HtmlDiv,        // <div align=... style=...> container
     // Inline elements
     Text,
     Code,
@@ -75,6 +76,13 @@ struct Element {
     int col_count = 0;        // for tables (number of columns)
     int alertKind = 0;        // for blockquotes: GitHub alert (0=none, 1=note, 2=tip,
                               // 3=important, 4=warning, 5=caution)
+    // HTML attribute subset (scheme A): block alignment and the three
+    // inline-CSS declarations the renderer honors (color, background,
+    // font-size). 0 = default alignment; colors are -1 when unset.
+    int htmlAlign = 0;        // 0=default, 1=left, 2=center, 3=right
+    int styleColorR = -1, styleColorG = -1, styleColorB = -1;
+    int styleBgR = -1, styleBgG = -1, styleBgB = -1;
+    float styleSizePt = 0.0f;  // 0 = inherit
 
     size_t sourceOffset = SIZE_MAX; // byte offset in original markdown source
 

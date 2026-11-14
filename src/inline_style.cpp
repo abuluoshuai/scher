@@ -90,6 +90,17 @@ void flattenInline(App& app, const std::vector<ElementPtr>& elements,
     for (const auto& elem : elements) {
         InlineStyle st = inherited;
         switch (elem->type) {
+            case ElementType::HtmlDiv:
+                // Transparent container: children inherit the div's colors
+                // through the style struct below
+                if (elem->styleColorR >= 0) {
+                    st.htmlColorR = elem->styleColorR;
+                    st.htmlColorG = elem->styleColorG;
+                    st.htmlColorB = elem->styleColorB;
+                }
+                if (elem->styleSizePt > 0) st.htmlSizePt = elem->styleSizePt;
+                flattenInline(app, elem->children, st, lineHeight, out);
+                return;
             case ElementType::Text:
             case ElementType::Code:
             case ElementType::Image:

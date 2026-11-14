@@ -26,6 +26,10 @@ struct InlineStyle {
     bool bold = false;
     bool italic = false;
     bool fixedSize = false;  // ^sup^/~sub~ own their font size
+    // HTML inline style (scheme A): color / background / font-size from
+    // <span style> / <div style> / <p style>. -1 / 0 = inherit.
+    int htmlColorR = -1, htmlColorG = -1, htmlColorB = -1;
+    float htmlSizePt = 0.0f;
 };
 
 struct StyledRun {
