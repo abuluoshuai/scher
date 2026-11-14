@@ -11,6 +11,7 @@
 #include "math_render.h"
 #include "image_loader.h"
 #include "image_disk_cache.h"
+#include <winhttp.h>
 #include "remote.h"
 
 #include <algorithm>
@@ -2595,62 +2596,152 @@ static bool createDecodedBitmap(App& app, const DecodedImage& image,
 // Only pixel bytes cross the thread boundary. The UI allocates the result
 // before launching so even download/decode allocation failures can complete
 // the pending cache entry without an exception terminating the process.
-// Download with a hard deadline: URLDownloadToCacheFileW has no timeout
-// parameter, and a hung TLS handshake used to stall the badge for 30s+
-// before the SVG fallback even started. The progress callback aborts the
-// transfer once the deadline passes; nothing else observes it.
+// HTTP(S) download via WinHTTP. Why not URLDownloadToCacheFileW:
+// it routes through the IE/WinINET proxy settings, which on many
+// developer machines point at a dead local proxy while the working
+// proxy is only configured through environment variables. This
+// implementation tries, in order:
+//   1. the http_proxy/https_proxy environment variable (developer setups)
+//   2. the machine default (WinHTTP default = IE settings)
+// A 10-second deadline aborts a hung handshake so the alt text shows
+// instead of an endless wait.
 namespace {
-class DownloadDeadlineCallback : public IBindStatusCallback {
-public:
-    explicit DownloadDeadlineCallback(DWORD ms) : start_(GetTickCount()) {}
-    // IUnknown: no one else holds this; a bare implementation suffices
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override {
-        if (!out) return E_POINTER;
-        if (riid == IID_IUnknown || riid == IID_IBindStatusCallback) {
-            *out = static_cast<IBindStatusCallback*>(this);
-            AddRef();
-            return S_OK;
-        }
-        *out = nullptr;
-        return E_NOINTERFACE;
-    }
-    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs_; }
-    ULONG STDMETHODCALLTYPE Release() override { return --refs_; }
-    HRESULT STDMETHODCALLTYPE OnStartBinding(DWORD, IBinding*) override { return S_OK; }
-    HRESULT STDMETHODCALLTYPE GetPriority(LONG* priority) override { *priority = 0; return S_OK; }
-    HRESULT STDMETHODCALLTYPE OnLowResource(DWORD) override { return S_OK; }
-    HRESULT STDMETHODCALLTYPE OnProgress(ULONG progress, ULONG maxProgress,
-                                        ULONG statusCode, LPCWSTR statusText) override {
-        (void)progress; (void)maxProgress; (void)statusCode; (void)statusText;
-        return GetTickCount() - start_ > kNetworkDeadlineMs ? E_ABORT : S_OK;
-    }
-    HRESULT STDMETHODCALLTYPE OnStopBinding(HRESULT, LPCWSTR) override { return S_OK; }
-    HRESULT STDMETHODCALLTYPE GetBindInfo(DWORD* style, BINDINFO* info) override {
-        // BINDF_NOWRITECACHE breaks URLDownloadToCacheFileW: it needs the
-        // cache to produce the file path it returns.
-        *style = BINDF_GETNEWESTVERSION;
-        return S_OK;
-    }
-    HRESULT STDMETHODCALLTYPE OnDataAvailable(DWORD, DWORD, FORMATETC*,
-                                              STGMEDIUM*) override { return S_OK; }
-    HRESULT STDMETHODCALLTYPE OnObjectAvailable(REFIID, IUnknown*) override { return S_OK; }
-private:
-    static constexpr DWORD kNetworkDeadlineMs = 10000;
-    DWORD start_;
-    ULONG refs_ = 1;
+
+struct HttpGetResult {
+    std::string bytes;
+    bool ok = false;
 };
+
+HttpGetResult httpGet(const std::wstring& host, const std::wstring& path,
+                      bool useProxy, const std::wstring& proxyHost,
+                      DWORD deadlineMs) {
+    HttpGetResult out;
+    DWORD start = GetTickCount();
+    HINTERNET session = WinHttpOpen(L"Scher/1.1",
+        useProxy ? WINHTTP_ACCESS_TYPE_NAMED_PROXY
+                 : WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        useProxy ? proxyHost.c_str() : WINHTTP_NO_PROXY_NAME,
+        WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) return out;
+    DWORD timeout = deadlineMs;
+    WinHttpSetOption(session, WINHTTP_OPTION_CONNECT_TIMEOUT, &timeout,
+                     sizeof(timeout));
+    WinHttpSetOption(session, WINHTTP_OPTION_RECEIVE_TIMEOUT, &timeout,
+                     sizeof(timeout));
+    HINTERNET connect = WinHttpConnect(session, host.c_str(),
+                                       INTERNET_DEFAULT_HTTPS_PORT, 0);
+    HINTERNET request = connect
+        ? WinHttpOpenRequest(connect, L"GET", path.c_str(), nullptr,
+                             WINHTTP_NO_REFERER,
+                             WINHTTP_DEFAULT_ACCEPT_TYPES,
+                             WINHTTP_FLAG_SECURE)
+        : nullptr;
+    if (request) {
+        // A local proxy with a self-signed cert should not brick image
+        // loading; shields.io itself uses a valid cert.
+        DWORD flags = SECURITY_FLAG_IGNORE_UNKNOWN_CA |
+                      SECURITY_FLAG_IGNORE_CERT_CN_INVALID |
+                      SECURITY_FLAG_IGNORE_CERT_DATE_INVALID;
+        WinHttpSetOption(request, WINHTTP_OPTION_SECURITY_FLAGS, &flags,
+                         sizeof(flags));
+        if (WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                               WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+            WinHttpReceiveResponse(request, nullptr)) {
+            DWORD status = 0, size = sizeof(status);
+            WinHttpQueryHeaders(request,
+                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                WINHTTP_HEADER_NAME_BY_INDEX, &status, &size,
+                WINHTTP_NO_HEADER_INDEX);
+            if (status == 200) {
+                for (;;) {
+                    DWORD available = 0;
+                    if (!WinHttpQueryDataAvailable(request, &available) || !available)
+                        break;
+                    std::vector<char> chunk(available);
+                    DWORD read = 0;
+                    if (!WinHttpReadData(request, chunk.data(), available, &read)
+                        || read == 0)
+                        break;
+                    out.bytes.append(chunk.data(), read);
+                    if (GetTickCount() - start > deadlineMs) {
+                        out.bytes.clear();
+                        break;
+                    }
+                }
+                out.ok = !out.bytes.empty();
+            }
+        }
+        WinHttpCloseHandle(request);
+    }
+    if (connect) WinHttpCloseHandle(connect);
+    if (session) WinHttpCloseHandle(session);
+    return out;
 }
 
-// Returns the cached-file path, or empty on failure/timeout. The deadline
-// applies per attempt.
-static std::wstring downloadToCache(const std::wstring& url) {
-    wchar_t tempPath[MAX_PATH] = {};
-    DownloadDeadlineCallback cb(10000);
-    if (SUCCEEDED(URLDownloadToCacheFileW(nullptr, url.c_str(), tempPath,
-                                          MAX_PATH, 0, &cb))) {
-        return tempPath;
+}  // namespace
+
+// UTF-16 -> UTF-8 (mirror of toWide above)
+static std::string toNarrow(const std::wstring& wide) {
+    if (wide.empty()) return {};
+    int len = WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), (int)wide.size(),
+                                  nullptr, 0, nullptr, nullptr);
+    std::string out(len, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), (int)wide.size(), &out[0],
+                        len, nullptr, nullptr);
+    return out;
+}
+
+// Downloads the URL into freshBytes. Tries the https_proxy environment
+// variable first, then the machine default. Empty result = failure.
+static void downloadToCache(const std::string& url, std::string& freshBytes) {
+    const std::string prefix = "https://";
+    if (url.rfind(prefix, 0) != 0) return;
+    std::string rest = url.substr(prefix.size());
+    size_t slash = rest.find('/');
+    if (slash == std::string::npos) return;
+    std::string hostUtf8 = rest.substr(0, slash);
+    std::string pathUtf8 = rest.substr(slash);
+
+    std::wstring envProxy;
+    wchar_t buf[512] = {};
+    DWORD n = GetEnvironmentVariableW(L"https_proxy", buf, 512);
+    if (n <= 0 || n > 512) n = GetEnvironmentVariableW(L"HTTPS_PROXY", buf, 512);
+    if (n > 0 && n <= 512) {
+        std::wstring proxy = buf;
+        proxy.erase(std::remove_if(proxy.begin(), proxy.end(),
+                    [](wchar_t c) { return iswspace(c); }), proxy.end());
+        for (const wchar_t* scheme : {L"https://", L"http://"}) {
+            size_t at = proxy.rfind(scheme);
+            if (at == 0) {
+                proxy = proxy.substr(wcslen(scheme));
+                break;
+            }
+        }
+        envProxy = proxy;
     }
-    return {};
+
+    auto wide = [](const std::string& utf8) {
+        int len = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(),
+                                      (int)utf8.size(), nullptr, 0);
+        std::wstring w(len, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), (int)utf8.size(),
+                            &w[0], len);
+        return w;
+    };
+
+    const std::wstring host = wide(hostUtf8);
+    const std::wstring path = wide(pathUtf8);
+    const DWORD deadline = 10000;
+
+    if (!envProxy.empty()) {
+        HttpGetResult viaProxy = httpGet(host, path, true, envProxy, deadline);
+        if (viaProxy.ok) {
+            freshBytes = viaProxy.bytes;
+            return;
+        }
+    }
+    HttpGetResult direct = httpGet(host, path, false, L"", deadline);
+    if (direct.ok) freshBytes = direct.bytes;
 }
 
 static void asyncImageWorker(HWND hwnd, UINT maxDimension,
@@ -2700,32 +2791,26 @@ static void asyncImageWorker(HWND hwnd, UINT maxDimension,
                 wideSrc.compare(wideSrc.size() - svgExt.size(), svgExt.size(),
                                 svgExt) == 0) {
                 std::wstring png = wideSrc.substr(0, wideSrc.size() - 4) + L".png";
-                std::wstring cached = downloadToCache(png);
-                if (!cached.empty()) {
-                    result->file = cached;
+                std::string freshBytesPng;
+                downloadToCache(toNarrow(png), freshBytesPng);
+                if (!freshBytesPng.empty()) {
                     Microsoft::WRL::ComPtr<IWICImagingFactory> wic;
                     if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
                             CLSCTX_INPROC_SERVER, IID_PPV_ARGS(wic.GetAddressOf())))) {
-                        result->ok = SUCCEEDED(decodeImageFile(wic.Get(), cached.c_str(),
-                                                              maxDimension, result->image));
+                        result->ok = SUCCEEDED(decodeImageBytes(
+                            wic.Get(), freshBytesPng.data(),
+                            (LONG)freshBytesPng.size(), maxDimension, result->image));
                     }
                     if (result->ok) {
-                        // Persist for the next session's instant load
-                        std::ifstream downloaded(
-                            std::filesystem::path(cached), std::ios::binary);
-                        std::string bytes((std::istreambuf_iterator<char>(downloaded)),
-                                          std::istreambuf_iterator<char>());
-                        if (!bytes.empty()) {
-                            imageDiskCacheStore(result->src, result->src, bytes);
-                        }
+                        imageDiskCacheStore(result->src, result->src, freshBytesPng);
                         // Disk-cache revalidation: the first frame (from
                         // disk) is already on screen. Deliver the fresh
                         // pixels only when the content actually changed.
-                        if (servedFromDisk && bytes != cachedBytes) {
+                        if (servedFromDisk && freshBytesPng != cachedBytes) {
                             result->image = {};
                             result->ok = SUCCEEDED(decodeImageBytes(
-                                workerWic.Get(), bytes.data(),
-                                (LONG)bytes.size(), maxDimension, result->image));
+                                workerWic.Get(), freshBytesPng.data(),
+                                (LONG)freshBytesPng.size(), maxDimension, result->image));
                             if (result->ok) {
                                 PostMessageW(hwnd, WM_APP_IMAGE_READY, 0,
                                              reinterpret_cast<LPARAM>(result.release()));
@@ -2744,23 +2829,18 @@ static void asyncImageWorker(HWND hwnd, UINT maxDimension,
                     return;
                 }
             }
-            std::wstring cached = downloadToCache(wideSrc);
-            if (!cached.empty()) {
-                result->file = cached;
+            std::string freshBytes;
+            downloadToCache(toNarrow(wideSrc), freshBytes);
+            if (!freshBytes.empty()) {
                 Microsoft::WRL::ComPtr<IWICImagingFactory> wic;
                 if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
                         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(wic.GetAddressOf())))) {
-                    result->ok = SUCCEEDED(decodeImageFile(wic.Get(), cached.c_str(),
-                                                          maxDimension, result->image));
+                    result->ok = SUCCEEDED(decodeImageBytes(
+                        wic.Get(), freshBytes.data(),
+                        (LONG)freshBytes.size(), maxDimension, result->image));
                 }
                 if (result->ok) {
-                    std::ifstream downloaded(
-                        std::filesystem::path(cached), std::ios::binary);
-                    std::string bytes((std::istreambuf_iterator<char>(downloaded)),
-                                      std::istreambuf_iterator<char>());
-                    if (!bytes.empty()) {
-                        imageDiskCacheStore(result->src, result->src, bytes);
-                    }
+                    imageDiskCacheStore(result->src, result->src, freshBytes);
                 }
             }
         }

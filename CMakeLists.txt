@@ -181,6 +181,7 @@ target_link_libraries(tinta PRIVATE
     shell32
     windowscodecs
     urlmon
+    winhttp
     ole32
     imm32
     d3d11
