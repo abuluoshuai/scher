@@ -368,6 +368,18 @@ void htmlAttributes() {
         check(image->title == "badge", "img alt lands in title");
     }
 
+    auto centeredImg = parseText(
+        "<div align=\"center\"><img src=\"x.png\" /></div>\n");
+    const Element* imgInDiv = findFirst(centeredImg.root.get(),
+                                        ElementType::Image);
+    check(imgInDiv != nullptr, "an img inside a centered div is kept");
+    if (imgInDiv) {
+        check(imgInDiv->parent &&
+              imgInDiv->parent->type == ElementType::HtmlDiv &&
+              imgInDiv->parent->htmlAlign == 2,
+              "the wrapping div carries align=center for the renderer");
+    }
+
     auto styled = parseText(
         "<p style=\"font-size: 20pt; text-align: bogus; margin: 0\">big</p>\n");
     const Element* para = findFirst(styled.root.get(), ElementType::Paragraph);

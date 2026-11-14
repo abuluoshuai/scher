@@ -2950,8 +2950,17 @@ static void layoutImage(App& app, const ElementPtr& elem, float& y, float indent
         displayW = displayH * (imgW / imgH);
     }
 
+    // HTML alignment (from <img align> or a wrapping <div align>): the
+    // image is a block here, so center/right shifts x by the leftover
+    float drawX = indent;
+    if (elem->htmlAlign == 2) {
+        drawX = indent + std::max(0.0f, (maxWidth - indent - displayW) * 0.5f);
+    } else if (elem->htmlAlign == 3) {
+        drawX = indent + std::max(0.0f, maxWidth - indent - displayW);
+    }
+
     app.layoutBitmaps.push_back({entry.bitmap,
-        D2D1::RectF(indent, y, indent + displayW, y + displayH)});
+        D2D1::RectF(drawX, y, drawX + displayW, y + displayH)});
 
     y += displayH + 12 * scale;
 }
@@ -3411,46 +3420,35 @@ static void layoutElement(App& app, const ElementPtr& elem, float& y, float inde
             break;
         }
         case ElementType::HtmlDiv: {
-            // <div align=... style=...>: block container. Alignment steers
-            // the inner content's maxWidth origin; background fills the
-            // whole container. Child blocks recurse through layoutElement.
+            // <div align=... style=...>: block container. Center/right
+            // alignment for inline runs and images uses a two-pass layout:
+            // measure in a scratch run, then place with an x offset.
+            // Image stays in the inline pipeline (it breaks itself out and
+            // layoutImage applies elem->htmlAlign).
             const float s = app.contentScale * app.zoomFactor;
-            const float bgPad = dpi(app, 6.0f);
-            const float bgTop = y;
-            auto alignedIndent = [&](void) {
-                if (elem->htmlAlign == 2) return indent;  // centering handled inline
-                if (elem->htmlAlign == 3) return indent;  // right handled inline
-                return indent;
-            };
-            (void)alignedIndent;
-            // Inline children run through layoutInlineContent with an
-            // alignment-aware wrapper
             std::vector<ElementPtr> inlineBuffer;
             auto flushInline = [&]() {
                 if (inlineBuffer.empty()) return;
                 if (elem->htmlAlign == 2 || elem->htmlAlign == 3) {
-                    // Measure, then offset the whole line
+                    // Pass 1: measure in an off-Y position (y untouched)
+                    float probeY = y + 100000.0f;
+                    auto saved = std::move(app.layoutBitmaps);
+                    layoutInlineContent(app, inlineBuffer, indent, probeY,
+                                        maxWidth, app.textFormat,
+                                        app.theme.text);
+                    float widest = 0.0f;
+                    for (const auto& lb : app.layoutBitmaps)
+                        widest = std::max(widest,
+                                          lb.destRect.right - indent);
+                    app.layoutBitmaps = std::move(saved);
+                    // Pass 2: real placement with an x offset
                     const float avail = maxWidth - indent;
-                    float lineW = 0.0f;
-                    for (const auto& child : inlineBuffer) {
-                        (void)child;
-                    }
-                    // Simplest correct approach: lay out normally into a
-                    // scratch, then translate is costly — instead reuse
-                    // layoutInlineContent with a narrowed box so text
-                    // alignment lands visually centered/right.
-                    float virtualIndent = indent;
-                    if (elem->htmlAlign == 2) {
-                        // center: pad both sides by the leftover
-                        layoutInlineContent(app, inlineBuffer, indent, y,
-                                            avail, app.textFormat,
-                                            app.theme.text);
-                    } else {
-                        layoutInlineContent(app, inlineBuffer, indent, y,
-                                            avail, app.textFormat,
-                                            app.theme.text);
-                    }
-                    (void)virtualIndent;
+                    const float offset = elem->htmlAlign == 2
+                        ? std::max(0.0f, (avail - widest) * 0.5f)
+                        : std::max(0.0f, avail - widest);
+                    layoutInlineContent(app, inlineBuffer, indent + offset, y,
+                                        avail, app.textFormat,
+                                        app.theme.text);
                 } else {
                     layoutInlineContent(app, inlineBuffer, indent, y, maxWidth,
                                         app.textFormat, app.theme.text);
@@ -3468,8 +3466,7 @@ static void layoutElement(App& app, const ElementPtr& elem, float& y, float inde
                                 child->type == ElementType::HorizontalRule ||
                                 child->type == ElementType::HtmlBlock ||
                                 child->type == ElementType::HtmlDiv ||
-                                child->type == ElementType::Table ||
-                                child->type == ElementType::Image);
+                                child->type == ElementType::Table);
                 if (isBlock) {
                     flushInline();
                     layoutElement(app, child, y, indent, maxWidth);
@@ -3478,7 +3475,6 @@ static void layoutElement(App& app, const ElementPtr& elem, float& y, float inde
                 }
             }
             flushInline();
-            (void)bgPad; (void)bgTop;
             break;
         }
         default:
