@@ -2592,12 +2592,67 @@ static bool createDecodedBitmap(App& app, const DecodedImage& image,
 // Only pixel bytes cross the thread boundary. The UI allocates the result
 // before launching so even download/decode allocation failures can complete
 // the pending cache entry without an exception terminating the process.
+// Download with a hard deadline: URLDownloadToCacheFileW has no timeout
+// parameter, and a hung TLS handshake used to stall the badge for 30s+
+// before the SVG fallback even started. The progress callback aborts the
+// transfer once the deadline passes; nothing else observes it.
+namespace {
+class DownloadDeadlineCallback : public IBindStatusCallback {
+public:
+    explicit DownloadDeadlineCallback(DWORD ms) : start_(GetTickCount()) {}
+    // IUnknown: no one else holds this; a bare implementation suffices
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override {
+        if (!out) return E_POINTER;
+        if (riid == IID_IUnknown || riid == IID_IBindStatusCallback) {
+            *out = static_cast<IBindStatusCallback*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *out = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs_; }
+    ULONG STDMETHODCALLTYPE Release() override { return --refs_; }
+    HRESULT STDMETHODCALLTYPE OnStartBinding(DWORD, IBinding*) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE GetPriority(LONG* priority) override { *priority = 0; return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnLowResource(DWORD) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnProgress(ULONG progress, ULONG maxProgress,
+                                        ULONG statusCode, LPCWSTR statusText) override {
+        (void)progress; (void)maxProgress; (void)statusCode; (void)statusText;
+        return GetTickCount() - start_ > kNetworkDeadlineMs ? E_ABORT : S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE OnStopBinding(HRESULT, LPCWSTR) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE GetBindInfo(DWORD* style, BINDINFO* info) override {
+        *style = BINDF_GETNEWESTVERSION | BINDF_NOWRITECACHE | BINDF_PRAGMA_NO_CACHE;
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE OnDataAvailable(DWORD, DWORD, FORMATETC*,
+                                              STGMEDIUM*) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnObjectAvailable(REFIID, IUnknown*) override { return S_OK; }
+private:
+    static constexpr DWORD kNetworkDeadlineMs = 10000;
+    DWORD start_;
+    ULONG refs_ = 1;
+};
+}
+
+// Returns the cached-file path, or empty on failure/timeout. The deadline
+// applies per attempt.
+static std::wstring downloadToCache(const std::wstring& url) {
+    wchar_t tempPath[MAX_PATH] = {};
+    DownloadDeadlineCallback cb(10000);
+    if (SUCCEEDED(URLDownloadToCacheFileW(nullptr, url.c_str(), tempPath,
+                                          MAX_PATH, 0, &cb))) {
+        return tempPath;
+    }
+    return {};
+}
+
 static void asyncImageWorker(HWND hwnd, UINT maxDimension,
                              std::unique_ptr<AsyncImageResult> result) {
     const HRESULT apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     try {
         if (SUCCEEDED(apartment)) {
-            wchar_t tempPath[MAX_PATH] = {};
             std::wstring wideSrc = toWide(result->src);
             // Shields.io-style badges come back as SVG whose <text>
             // elements Direct2D's SVG subset cannot render (they would
@@ -2609,13 +2664,13 @@ static void asyncImageWorker(HWND hwnd, UINT maxDimension,
                 wideSrc.compare(wideSrc.size() - svgExt.size(), svgExt.size(),
                                 svgExt) == 0) {
                 std::wstring png = wideSrc.substr(0, wideSrc.size() - 4) + L".png";
-                if (SUCCEEDED(URLDownloadToCacheFileW(nullptr, png.c_str(), tempPath,
-                                                      MAX_PATH, 0, nullptr))) {
-                    result->file = tempPath;
+                std::wstring cached = downloadToCache(png);
+                if (!cached.empty()) {
+                    result->file = cached;
                     Microsoft::WRL::ComPtr<IWICImagingFactory> wic;
                     if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
                             CLSCTX_INPROC_SERVER, IID_PPV_ARGS(wic.GetAddressOf())))) {
-                        result->ok = SUCCEEDED(decodeImageFile(wic.Get(), tempPath,
+                        result->ok = SUCCEEDED(decodeImageFile(wic.Get(), cached.c_str(),
                                                               maxDimension, result->image));
                     }
                 }
@@ -2629,13 +2684,13 @@ static void asyncImageWorker(HWND hwnd, UINT maxDimension,
                     return;
                 }
             }
-            if (SUCCEEDED(URLDownloadToCacheFileW(nullptr, wideSrc.c_str(), tempPath,
-                                                  MAX_PATH, 0, nullptr))) {
-                result->file = tempPath;
+            std::wstring cached = downloadToCache(wideSrc);
+            if (!cached.empty()) {
+                result->file = cached;
                 Microsoft::WRL::ComPtr<IWICImagingFactory> wic;
                 if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
                         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(wic.GetAddressOf())))) {
-                    result->ok = SUCCEEDED(decodeImageFile(wic.Get(), tempPath,
+                    result->ok = SUCCEEDED(decodeImageFile(wic.Get(), cached.c_str(),
                                                           maxDimension, result->image));
                 }
             }
