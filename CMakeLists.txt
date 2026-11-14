@@ -82,6 +82,7 @@ set(SOURCES
     src/search_panel.cpp
     src/render.cpp
     src/image_loader.cpp
+    src/image_disk_cache.cpp
     src/file_utils.cpp
     src/overlays.cpp
     src/frontmatter_ui.cpp

@@ -10,6 +10,7 @@
 #include "mermaid_ext.h"
 #include "math_render.h"
 #include "image_loader.h"
+#include "image_disk_cache.h"
 #include "remote.h"
 
 #include <algorithm>
@@ -2571,6 +2572,8 @@ struct AsyncImageResult {
     DecodedImage image;
     bool ok = false;
     std::wstring file;  // downloaded cache path (SVG second pass)
+    bool servedFromDisk = false;  // disk cache hit: background refresh wanted
+    std::string freshBytes;       // fresh download bytes when it revalidates
 };
 
 static bool createDecodedBitmap(App& app, const DecodedImage& image,
@@ -2653,6 +2656,37 @@ static void asyncImageWorker(HWND hwnd, UINT maxDimension,
     const HRESULT apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     try {
         if (SUCCEEDED(apartment)) {
+            // First-access disk cache: previously downloaded bytes decode
+            // instantly and go on screen first. The network download still
+            // runs afterwards; when the fresh bytes differ from the cached
+            // ones a second frame is delivered and the UI swaps the pixels.
+            const std::string workerSrc = result->src;
+            bool servedFromDisk = false;
+            std::string cachedBytes = imageDiskCacheLoad(result->src);
+            const bool hasDiskCache =
+                !cachedBytes.empty() &&
+                imageDiskCacheUrl(result->src) == result->src;
+            Microsoft::WRL::ComPtr<IWICImagingFactory> workerWic;
+            if (hasDiskCache) {
+                if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(workerWic.GetAddressOf())))) {
+                    result->ok = SUCCEEDED(decodeImageBytes(
+                        workerWic.Get(), cachedBytes.data(),
+                        (LONG)cachedBytes.size(), maxDimension, result->image));
+                }
+                if (result->ok) {
+                    result->servedFromDisk = true;
+                    servedFromDisk = true;
+                    PostMessageW(hwnd, WM_APP_IMAGE_READY, 0,
+                                 reinterpret_cast<LPARAM>(result.release()));
+                    // result is now owned by the UI thread: make a fresh one
+                    // for the revalidation frame below
+                    result = std::make_unique<AsyncImageResult>();
+                    result->src = workerSrc;
+                } else {
+                    cachedBytes.clear();  // corrupt entry: fall through to network
+                }
+            }
             std::wstring wideSrc = toWide(result->src);
             // Shields.io-style badges come back as SVG whose <text>
             // elements Direct2D's SVG subset cannot render (they would
@@ -2673,6 +2707,30 @@ static void asyncImageWorker(HWND hwnd, UINT maxDimension,
                         result->ok = SUCCEEDED(decodeImageFile(wic.Get(), cached.c_str(),
                                                               maxDimension, result->image));
                     }
+                    if (result->ok) {
+                        // Persist for the next session's instant load
+                        std::ifstream downloaded(
+                            std::filesystem::path(cached), std::ios::binary);
+                        std::string bytes((std::istreambuf_iterator<char>(downloaded)),
+                                          std::istreambuf_iterator<char>());
+                        if (!bytes.empty()) {
+                            imageDiskCacheStore(result->src, result->src, bytes);
+                        }
+                        // Disk-cache revalidation: the first frame (from
+                        // disk) is already on screen. Deliver the fresh
+                        // pixels only when the content actually changed.
+                        if (servedFromDisk && bytes != cachedBytes) {
+                            result->image = {};
+                            result->ok = SUCCEEDED(decodeImageBytes(
+                                workerWic.Get(), bytes.data(),
+                                (LONG)bytes.size(), maxDimension, result->image));
+                            if (result->ok) {
+                                PostMessageW(hwnd, WM_APP_IMAGE_READY, 0,
+                                             reinterpret_cast<LPARAM>(result.release()));
+                                return;
+                            }
+                        }
+                    }
                 }
                 if (!result->ok) {
                     // PNG variant missing: fall back to the original SVG
@@ -2692,6 +2750,15 @@ static void asyncImageWorker(HWND hwnd, UINT maxDimension,
                         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(wic.GetAddressOf())))) {
                     result->ok = SUCCEEDED(decodeImageFile(wic.Get(), cached.c_str(),
                                                           maxDimension, result->image));
+                }
+                if (result->ok) {
+                    std::ifstream downloaded(
+                        std::filesystem::path(cached), std::ios::binary);
+                    std::string bytes((std::istreambuf_iterator<char>(downloaded)),
+                                      std::istreambuf_iterator<char>());
+                    if (!bytes.empty()) {
+                        imageDiskCacheStore(result->src, result->src, bytes);
+                    }
                 }
             }
         }
