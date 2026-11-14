@@ -2602,7 +2602,9 @@ static bool createDecodedBitmap(App& app, const DecodedImage& image,
 // proxy is only configured through environment variables. This
 // implementation tries, in order:
 //   1. the http_proxy/https_proxy environment variable (developer setups)
-//   2. the machine default (WinHTTP default = IE settings)
+//   2. a direct connection (no proxy) — many machines have a dead IE
+//      proxy but unrestricted direct access
+//   3. the machine default (WinHTTP default = IE settings)
 // A 10-second deadline aborts a hung handshake so the alt text shows
 // instead of an endless wait.
 namespace {
@@ -2614,12 +2616,12 @@ struct HttpGetResult {
 
 HttpGetResult httpGet(const std::wstring& host, const std::wstring& path,
                       bool useProxy, const std::wstring& proxyHost,
-                      DWORD deadlineMs) {
+                      DWORD deadlineMs,
+                      DWORD accessType = WINHTTP_ACCESS_TYPE_DEFAULT_PROXY) {
     HttpGetResult out;
     DWORD start = GetTickCount();
     HINTERNET session = WinHttpOpen(L"Scher/1.1",
-        useProxy ? WINHTTP_ACCESS_TYPE_NAMED_PROXY
-                 : WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        accessType,
         useProxy ? proxyHost.c_str() : WINHTTP_NO_PROXY_NAME,
         WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) return out;
@@ -2733,6 +2735,9 @@ static void downloadToCache(const std::string& url, std::string& freshBytes) {
     const std::wstring path = wide(pathUtf8);
     const DWORD deadline = 10000;
 
+    // Order matters: many machines have a dead IE proxy but working
+    // direct access (or vice versa). Environment proxy (when present),
+    // then direct, then the machine default — first success wins.
     if (!envProxy.empty()) {
         HttpGetResult viaProxy = httpGet(host, path, true, envProxy, deadline);
         if (viaProxy.ok) {
@@ -2740,8 +2745,15 @@ static void downloadToCache(const std::string& url, std::string& freshBytes) {
             return;
         }
     }
-    HttpGetResult direct = httpGet(host, path, false, L"", deadline);
-    if (direct.ok) freshBytes = direct.bytes;
+    HttpGetResult direct = httpGet(
+        host, path, false, L"", deadline / 2, WINHTTP_ACCESS_TYPE_NO_PROXY);
+    if (direct.ok) {
+        freshBytes = direct.bytes;
+        return;
+    }
+    HttpGetResult viaDefault = httpGet(
+        host, path, true, L"", deadline / 2, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY);
+    if (viaDefault.ok) freshBytes = viaDefault.bytes;
 }
 
 static void asyncImageWorker(HWND hwnd, UINT maxDimension,
