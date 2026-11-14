@@ -2538,6 +2538,7 @@ struct AsyncImageResult {
     std::string src;
     DecodedImage image;
     bool ok = false;
+    std::wstring file;  // downloaded cache path (SVG second pass)
 };
 
 static bool createDecodedBitmap(App& app, const DecodedImage& image,
@@ -2568,6 +2569,7 @@ static void asyncImageWorker(HWND hwnd, UINT maxDimension,
             const std::wstring wideSrc = toWide(result->src);
             if (SUCCEEDED(URLDownloadToCacheFileW(nullptr, wideSrc.c_str(), tempPath,
                                                   MAX_PATH, 0, nullptr))) {
+                result->file = tempPath;
                 Microsoft::WRL::ComPtr<IWICImagingFactory> wic;
                 if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
                         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(wic.GetAddressOf())))) {
@@ -3673,7 +3675,18 @@ void completeAsyncImage(App& app, void* asyncResult) {
     entry.failed = true;
     // Remote entries stay pinned: re-downloading one costs an ssh round trip.
     entry.pinned = pending->second.pinned;
-    if (result->ok) createDecodedBitmap(app, result->image, entry);
+    if (result->ok) {
+        createDecodedBitmap(app, result->image, entry);
+    } else if (!result->file.empty()) {
+        // WIC cannot decode SVG: render it through Direct2D's SVG document
+        // support on the main thread (same path local .svg files take).
+        std::wstring lower = result->file;
+        for (auto& c : lower) c = (wchar_t)towlower(c);
+        if (lower.size() > 4 &&
+            lower.compare(lower.size() - 4, 4, L".svg") == 0) {
+            loadSvgBitmap(app, result->file, entry);
+        }
+    }
     app.storeImageCacheEntry(result->src, std::move(entry));
 
     // Coalesce several completions into one reflow.
