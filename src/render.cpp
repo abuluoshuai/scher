@@ -38,7 +38,9 @@ static bool fitBlockEnabled(const App& app, unsigned key) {
            app.fitBlocks.end();
 }
 
+
 namespace {
+static App::ImageEntry& getOrLoadImage(App& app, const std::string& src);
 constexpr float kHugeWidth = 100000.0f;
 constexpr float kLineBucketTolerance = 5.0f;
 // Horizontal padding drawn around an inline `code` pill
@@ -690,7 +692,37 @@ static void layoutInlineContent(App& app, const std::vector<ElementPtr>& element
                 continue;
 
             case ElementType::Image: {
-                // Break out of inline flow, render image as block
+                // Small images (badges) flow inline like text; only large
+                // ones break out as a block. This matches browser layout
+                // for README rows of shields.io badges.
+                auto& entry = getOrLoadImage(app, elem->url);
+                if (entry.bitmap && !entry.failed) {
+                    const float scale = app.contentScale * app.zoomFactor;
+                    float imgW = (float)entry.width;
+                    float imgH = (float)entry.height;
+                    float displayScale = std::min(1.0f, maxWidth / imgW);
+                    float displayW = imgW * displayScale;
+                    float displayH = imgH * displayScale;
+                    const float maxH = 600.0f * scale;
+                    if (displayH > maxH) {
+                        displayH = maxH;
+                        displayW = displayH * (imgW / imgH);
+                    }
+                    if (displayH <= lineHeight * 2.5f &&
+                        x + displayW <= startX + maxWidth) {
+                        // Inline placement, vertically centered on the line
+                        const float imgY = y + (lineHeight - displayH) * 0.5f;
+                        Microsoft::WRL::ComPtr<ID2D1Bitmap> bitmapRef = entry.bitmap;
+                        app.layoutBitmaps.push_back(
+                            {std::move(bitmapRef),
+                             D2D1::RectF(x, imgY, x + displayW,
+                                         imgY + displayH)});
+                        x += displayW + spaceWidth;
+                        app.docText += L" ";
+                        continue;
+                    }
+                }
+                // Large (or failed) image: block break as before
                 if (x > startX) {
                     y += lineHeight;  // end current line
                     x = startX;
@@ -2973,7 +3005,8 @@ static void layoutImage(App& app, const ElementPtr& elem, float& y, float indent
         drawX = indent + std::max(0.0f, maxWidth - indent - displayW);
     }
 
-    app.layoutBitmaps.push_back({entry.bitmap,
+    Microsoft::WRL::ComPtr<ID2D1Bitmap> bitmapRef = entry.bitmap;
+    app.layoutBitmaps.push_back({std::move(bitmapRef),
         D2D1::RectF(drawX, y, drawX + displayW, y + displayH)});
 
     y += displayH + 12 * scale;
