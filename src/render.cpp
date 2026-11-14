@@ -2598,7 +2598,37 @@ static void asyncImageWorker(HWND hwnd, UINT maxDimension,
     try {
         if (SUCCEEDED(apartment)) {
             wchar_t tempPath[MAX_PATH] = {};
-            const std::wstring wideSrc = toWide(result->src);
+            std::wstring wideSrc = toWide(result->src);
+            // Shields.io-style badges come back as SVG whose <text>
+            // elements Direct2D's SVG subset cannot render (they would
+            // vanish, leaving colored bars). Those services also serve
+            // the identical badge as PNG: swap the extension so the
+            // pixels carry the text.
+            const std::wstring svgExt = L".svg";
+            if (wideSrc.size() > svgExt.size() &&
+                wideSrc.compare(wideSrc.size() - svgExt.size(), svgExt.size(),
+                                svgExt) == 0) {
+                std::wstring png = wideSrc.substr(0, wideSrc.size() - 4) + L".png";
+                if (SUCCEEDED(URLDownloadToCacheFileW(nullptr, png.c_str(), tempPath,
+                                                      MAX_PATH, 0, nullptr))) {
+                    result->file = tempPath;
+                    Microsoft::WRL::ComPtr<IWICImagingFactory> wic;
+                    if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(wic.GetAddressOf())))) {
+                        result->ok = SUCCEEDED(decodeImageFile(wic.Get(), tempPath,
+                                                              maxDimension, result->image));
+                    }
+                }
+                if (!result->ok) {
+                    // PNG variant missing: fall back to the original SVG
+                    // (shapes render; text drops per the D2D SVG subset)
+                    wideSrc = toWide(result->src);
+                } else {
+                    PostMessageW(hwnd, WM_APP_IMAGE_READY, 0,
+                                 reinterpret_cast<LPARAM>(result.release()));
+                    return;
+                }
+            }
             if (SUCCEEDED(URLDownloadToCacheFileW(nullptr, wideSrc.c_str(), tempPath,
                                                   MAX_PATH, 0, nullptr))) {
                 result->file = tempPath;
