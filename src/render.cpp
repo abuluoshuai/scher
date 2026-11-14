@@ -2626,7 +2626,9 @@ public:
     }
     HRESULT STDMETHODCALLTYPE OnStopBinding(HRESULT, LPCWSTR) override { return S_OK; }
     HRESULT STDMETHODCALLTYPE GetBindInfo(DWORD* style, BINDINFO* info) override {
-        *style = BINDF_GETNEWESTVERSION | BINDF_NOWRITECACHE | BINDF_PRAGMA_NO_CACHE;
+        // BINDF_NOWRITECACHE breaks URLDownloadToCacheFileW: it needs the
+        // cache to produce the file path it returns.
+        *style = BINDF_GETNEWESTVERSION;
         return S_OK;
     }
     HRESULT STDMETHODCALLTYPE OnDataAvailable(DWORD, DWORD, FORMATETC*,
