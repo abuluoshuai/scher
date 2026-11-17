@@ -2413,6 +2413,8 @@ void handleMouseDown(App& app, HWND hwnd, WPARAM, LPARAM lParam) {
                 app.selFocus = we;
                 app.selecting = true;
                 app.hasSelection = true;
+                // VSCode-style: same-word occurrences light up everywhere
+                updateOccurrenceHighlight(app);
             }
         } else if (app.clickCount == 3) {
             // Triple-click: select the visual line

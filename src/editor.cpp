@@ -28,6 +28,8 @@
 #include <imm.h>
 #include <commdlg.h>
 
+
+
 #define TIMER_EDITOR_REPARSE 2
 
 // Markdown assists (defined near the char handler)
@@ -3853,6 +3855,7 @@ void handleEditorMouseDown(App& app, HWND hwnd, int x, int y) {
         app.editorSelEnd = wordEnd;
         app.editorCursorPos = wordEnd;
         app.editorHasSelection = (wordStart != wordEnd);
+        updateOccurrenceHighlight(app);
     } else if (app.clickCount == 3) {
         app.editorCaretUpstreamPos = std::wstring::npos;
         // Triple-click: select line
@@ -3878,6 +3881,7 @@ void handleEditorMouseDown(App& app, HWND hwnd, int x, int y) {
             app.editorSelStart = clickPos;
             app.editorSelEnd = clickPos;
             app.editorHasSelection = false;
+            updateOccurrenceHighlight(app);
         }
         app.editorSelecting = true;
         SetCapture(hwnd);
@@ -4075,6 +4079,49 @@ void handleEditorMouseWheel(App& app, HWND hwnd, float delta) {
 // HitTestTextRange returns one rect per visual row the range touches.
 // One right-aligned number in the slim gutter, level with its line
 // (design t11); the caret line's number brightens toward the accent
+// VSCode-style occurrence highlight: when the current selection is
+// exactly one word, collect every identical word in the document. The
+// renderer draws these as a soft wash under the real selection.
+void updateOccurrenceHighlight(App& app) {
+    app.editorOccurrenceMatches.clear();
+    app.editorOccurrenceWord.clear();
+    if (!app.editMode || !app.editorHasSelection) return;
+    // Selection must be a single contiguous word
+    size_t selMin = std::min(app.editorSelStart, app.editorSelEnd);
+    size_t selMax = std::max(app.editorSelStart, app.editorSelEnd);
+    if (selMax <= selMin) return;
+    if (selMax - selMin > 128) return;  // not a "word", it's a block
+    const std::wstring& text = app.editorText;
+    // Word shape check: the selection and its boundary characters
+    auto wordChar = [](wchar_t c) {
+        return iswalnum(c) || c == L'_';
+    };
+    if (selMin > 0 && wordChar(text[selMin - 1]) && wordChar(text[selMin]))
+        return;  // selection starts mid-word
+    if (selMax < text.size() && wordChar(text[selMax - 1]) &&
+        wordChar(text[selMax]))
+        return;  // selection ends mid-word
+    if (!wordChar(text[selMin]) && text[selMin] != L'_') return;
+    std::wstring word = text.substr(selMin, selMax - selMin);
+    app.editorOccurrenceWord = std::string(word.begin(), word.end());
+
+    // Collect matches (word-boundary aligned), skipping the selection
+    // itself — the real selection already covers it more strongly
+    size_t scan = 0;
+    while (scan < text.size()) {
+        size_t hit = text.find(word, scan);
+        if (hit == std::wstring::npos) break;
+        size_t end = hit + word.size();
+        bool boundaryL = hit == 0 || !wordChar(text[hit - 1]);
+        bool boundaryR = end >= text.size() || !wordChar(text[end]);
+        if (boundaryL && boundaryR && !(hit == selMin && end == selMax)) {
+            app.editorOccurrenceMatches.push_back(
+                {(int)hit, (int)word.size()});
+        }
+        scan = hit + 1;
+    }
+}
+
 static void editorDrawLineNumber(App& app, size_t lineIdx, float lineY,
                                  float lineHeight, bool isCaretLine) {
     if (!app.editorGutterFormat) return;
@@ -4238,6 +4285,19 @@ static void renderEditorWrapped(App& app, float editorWidth) {
                     D2D1::RectF(textX + ex, lineY + ey,
                                 textX + ex + charWidth, lineY + ey + lineHeight),
                     app.brush);
+            }
+        }
+        // VSCode-style occurrence wash: identical words glow softly under
+        // the real selection
+        if (!app.editorOccurrenceMatches.empty()) {
+            for (const auto& m : app.editorOccurrenceMatches) {
+                if (m.startPos >= lineStart + lineLen) break;
+                if (m.startPos + m.length <= lineStart) continue;
+                size_t hlStart = (m.startPos > lineStart) ? m.startPos - lineStart : 0;
+                size_t hlEnd = std::min(m.startPos + m.length - lineStart, lineLen);
+                D2D1_COLOR_F occ = D2D1::ColorF(0.2f, 0.4f, 0.9f, 0.16f);
+                editorFillRangeRects(app, lineLayout, textX, lineY,
+                                     hlStart, hlEnd - hlStart, occ);
             }
         }
         editorFillExtraSelections(app, lineLayout, textX, lineY, lineStart, lineLen,

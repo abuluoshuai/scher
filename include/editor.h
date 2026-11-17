@@ -36,6 +36,7 @@ void handleEditorKeyDown(App& app, HWND hwnd, WPARAM wParam);
 void handleEditorCharInput(App& app, HWND hwnd, WPARAM wParam);
 void editorPositionImeWindow(App& app, HWND hwnd);
 void handleEditorMouseDown(App& app, HWND hwnd, int x, int y);
+void updateOccurrenceHighlight(App& app);
 void handleEditorMouseUp(App& app, HWND hwnd, int x, int y);
 void handleEditorMouseMove(App& app, HWND hwnd, int x, int y);
 void handleEditorMouseWheel(App& app, HWND hwnd, float delta);

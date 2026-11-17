@@ -1453,6 +1453,11 @@ struct App {
         size_t length;
     };
     std::vector<EditorSearchMatch> editorSearchMatches;
+    // VSCode-style occurrence highlight: when the selection is exactly a
+    // word, every identical word in the document gets a soft underline
+    // wash. Empty when the selection is not word-shaped.
+    std::vector<EditorSearchMatch> editorOccurrenceMatches;
+    std::string editorOccurrenceWord;
     int editorSearchCurrentIndex = 0;
 
     // Editor find & replace (#121): Ctrl+H adds a replace row to search
