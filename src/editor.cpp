@@ -4103,7 +4103,6 @@ void updateOccurrenceHighlight(App& app) {
         return;  // selection ends mid-word
     if (!wordChar(text[selMin]) && text[selMin] != L'_') return;
     std::wstring word = text.substr(selMin, selMax - selMin);
-    app.editorOccurrenceWord = std::string(word.begin(), word.end());
 
     // Collect matches (word-boundary aligned), skipping the selection
     // itself — the real selection already covers it more strongly
@@ -4116,7 +4115,7 @@ void updateOccurrenceHighlight(App& app) {
         bool boundaryR = end >= text.size() || !wordChar(text[end]);
         if (boundaryL && boundaryR && !(hit == selMin && end == selMax)) {
             app.editorOccurrenceMatches.push_back(
-                {(int)hit, (int)word.size()});
+                {static_cast<size_t>(hit), word.size()});
         }
         scan = hit + 1;
     }
